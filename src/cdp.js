@@ -432,6 +432,7 @@ export function buildInjectScript(
       el.querySelector('.agy-home') ||
       el.querySelector('[data-testid="send-button"]') ||
       el.querySelector('[data-testid="user-input-step"]') ||
+      el.querySelector('[data-testid="agent-response"]') ||
       el.querySelector('[data-testid="planner-response-text"]'))
   );
 
@@ -507,7 +508,7 @@ export function buildInjectScript(
     if (targetStage) {
       targetStage.setAttribute('data-dxl-stage', 'conversation');
       const trackHooks = targetStage.querySelectorAll(
-        '[data-testid="user-input-step"], [data-testid="planner-response-text"], [data-testid="home-greeting"], #antigravity\\\\.agentSidePanelInputBox'
+        '[data-testid="user-input-step"], [data-testid="agent-response"], [data-testid="planner-response-text"], [data-testid="home-greeting"], #antigravity\\\\.agentSidePanelInputBox'
       );
       for (const hook of trackHooks) {
         let node = hook;
