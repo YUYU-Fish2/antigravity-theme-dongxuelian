@@ -1,5 +1,15 @@
-import { existsSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  watch,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildThemeCss, loadThemeAssets } from './assets.js';
 import {
@@ -19,6 +29,13 @@ import {
 
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+export function resolveRootPath(rootDir = DEFAULT_ROOT) {
+  if (rootDir instanceof URL) {
+    return fileURLToPath(rootDir);
+  }
+  return rootDir ? String(rootDir) : DEFAULT_ROOT;
+}
+
 /**
  * 读取项目版本号，失败时回退到 `0.1.0`。
  * @param {string} rootDir
@@ -26,7 +43,7 @@ const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
  */
 export function readPackageVersion(rootDir = DEFAULT_ROOT) {
   try {
-    const pkgPath = join(rootDir, 'package.json');
+    const pkgPath = join(resolveRootPath(rootDir), 'package.json');
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
     if (typeof pkg.version === 'string' && pkg.version.trim()) {
       return pkg.version.trim();
@@ -49,6 +66,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     shift: true,
     i18n: true,
     i18nOverride: undefined,
+    daemon: false,
+    ifNotRunning: false,
     help: false,
   };
 
@@ -60,10 +79,26 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     return trimmed;
   };
 
+  const readNextOptionValue = (index, missingMessage) => {
+    const next = argv[index + 1];
+    if (next === undefined || next.startsWith('-')) {
+      throw new Error(missingMessage);
+    }
+    return next;
+  };
+
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
       options.help = true;
+      continue;
+    }
+    if (arg === '--daemon') {
+      options.daemon = true;
+      continue;
+    }
+    if (arg === '--if-not-running') {
+      options.ifNotRunning = true;
       continue;
     }
     if (arg === '--no-avatar') {
@@ -79,11 +114,9 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       continue;
     }
     if (arg === '--i18n-override') {
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith('-')) {
-        throw new Error('--i18n-override 需要传入覆盖词典文件路径');
-      }
-      options.i18nOverride = validateOverridePath(next);
+      options.i18nOverride = validateOverridePath(
+        readNextOptionValue(i, '--i18n-override 需要传入覆盖词典文件路径'),
+      );
       i += 1;
       continue;
     }
@@ -92,11 +125,9 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       continue;
     }
     if (arg === '--port') {
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith('-')) {
-        throw new Error('--port 需要传入 1~65535 的整数端口号');
-      }
-      options.port = validatePort(next);
+      options.port = validatePort(
+        readNextOptionValue(i, '--port 需要传入 1~65535 的整数端口号'),
+      );
       i += 1;
       continue;
     }
@@ -116,11 +147,17 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
  * @returns {string}
  */
 export function formatUsage(commandName = 'inject') {
+  const npmScriptName =
+    commandName === 'install'
+      ? 'install-theme'
+      : commandName === 'uninstall'
+        ? 'uninstall-theme'
+        : commandName;
   return [
     `冬雪莲 Antigravity 桌面端主题工具 (${commandName})`,
     '',
     '用法：',
-    `  npm run ${commandName} -- [选项]`,
+    `  npm run ${npmScriptName} -- [选项]`,
     `  node bin/${commandName}.js [选项]`,
     '',
     '选项：',
@@ -129,6 +166,8 @@ export function formatUsage(commandName = 'inject') {
     '  --no-shift                关闭对话流居中阅读偏移微调',
     '  --no-i18n                 关闭界面简体中文汉化（若已汉化则自动还原英文）',
     '  --i18n-override <路径>    指定额外的用户覆盖词典 JSON 文件',
+    '  --daemon                  以无交互后台日志模式运行监听（主要用于自启守护）',
+    '  --if-not-running          仅在当前无运行中监听进程时启动（避免重复守护）',
     '  -h, --help                显示此帮助信息',
   ].join('\n');
 }
@@ -150,10 +189,11 @@ export function prepareRuntimePayload({
   i18n = true,
   i18nOverride,
 } = {}) {
-  const assets = loadThemeAssets(rootDir);
-  const css = buildThemeCss({ rootDir });
-  const version = readPackageVersion(rootDir);
-  const i18nDict = i18n ? loadI18nDictionary({ rootDir, overridePath: i18nOverride }).dict : null;
+  const resolvedRoot = resolveRootPath(rootDir);
+  const assets = loadThemeAssets(resolvedRoot);
+  const css = buildThemeCss({ rootDir: resolvedRoot, assets });
+  const version = readPackageVersion(resolvedRoot);
+  const i18nDict = i18n ? loadI18nDictionary({ rootDir: resolvedRoot, overridePath: i18nOverride }).dict : null;
   const script = buildInjectScript(css, {
     avatarDataUri: avatar ? assets.avatar.dataUri : '',
     avatar,
@@ -243,29 +283,157 @@ export async function injectOnce(options = {}) {
   return { port: targetPort, injectedCount: results.length, results };
 }
 
-function tryStopWatcherByPidFile(pidFile, logger) {
-  if (!pidFile || !existsSync(pidFile)) {
+export function unlinkQuietly(filePath) {
+  try {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
+    }
+  } catch {
+    // 忽略清理文件异常
+  }
+}
+
+/**
+ * 检查指定 PID 进程是否存活。
+ * @param {number} pid
+ * @returns {boolean}
+ */
+export function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
     return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+/**
+ * 判断指定 PID 是否为存活中的 Node 进程（避免重启后 PID 复用导致误判或误杀）。
+ * @param {number} pid
+ * @returns {boolean}
+ */
+export function isNodeProcessPid(pid) {
+  if (!isProcessAlive(pid)) {
+    return false;
+  }
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 2000,
+      });
+      const lower = out.toLowerCase();
+      return lower.includes('"node.exe"') && out.includes(`"${pid}"`);
+    }
+    if (process.platform === 'linux' && existsSync(`/proc/${pid}/comm`)) {
+      const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim().toLowerCase();
+      return comm.startsWith('node');
+    }
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
+      encoding: 'utf8',
+      timeout: 2000,
+    });
+    return basename(out.trim()).toLowerCase().startsWith('node');
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 读取 `.watch.pid` 文件中记录的存活 Node 进程 PID；若无效或已失效则清理文件。
+ * @param {string} pidFile
+ * @returns {number|null}
+ */
+export function readLiveWatcherPid(pidFile) {
+  if (!pidFile || !existsSync(pidFile)) {
+    return null;
+  }
+  let parsedPid = null;
+  try {
+    const pidText = readFileSync(pidFile, 'utf8').trim();
+    const candidate = Number.parseInt(pidText, 10);
+    if (Number.isInteger(candidate) && candidate > 0) {
+      parsedPid = candidate;
+    }
+  } catch {
+    return null;
+  }
+  if (!parsedPid || !isNodeProcessPid(parsedPid)) {
+    unlinkQuietly(pidFile);
+    return null;
+  }
+  return parsedPid;
+}
+
+export function tryStopWatcherByPidFile(pidFile, logger) {
+  const pid = readLiveWatcherPid(pidFile);
+  if (!pid) {
+    return { signaled: false, pid: null };
   }
   let signaled = false;
   try {
-    const pidText = readFileSync(pidFile, 'utf8').trim();
-    const pid = Number.parseInt(pidText, 10);
-    if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+    if (pid !== process.pid) {
       process.kill(pid, 'SIGTERM');
       signaled = true;
       logger?.log?.(`[冬雪莲] 已向监听进程 (PID ${pid}) 发送停止信号。`);
     }
   } catch (err) {
     if (err?.code === 'ESRCH') {
-      try {
-        unlinkSync(pidFile);
-      } catch {
-        // 忽略清理过期 PID 文件异常
-      }
+      unlinkQuietly(pidFile);
     }
   }
-  return signaled;
+  return { signaled, pid };
+}
+
+export function cleanupExitedPidFile(pidFile, pid) {
+  if (!pidFile || !pid || !existsSync(pidFile)) {
+    return;
+  }
+  if (!isProcessAlive(pid)) {
+    unlinkQuietly(pidFile);
+  }
+}
+
+/**
+ * 在守护日志超过体积上限时轮转为 `.1` 备份，防止长期驻留无限膨胀。
+ * @param {string} logFile
+ * @param {number} [maxBytes]
+ */
+export function rotateLogIfNeeded(logFile, maxBytes = 512 * 1024) {
+  try {
+    if (existsSync(logFile) && statSync(logFile).size >= maxBytes) {
+      renameSync(logFile, `${logFile}.1`);
+    }
+  } catch {
+    // 忽略日志轮转异常
+  }
+}
+
+/**
+ * 创建写入文件并带时间戳的后台守护日志器。
+ * @param {string} logFile
+ * @returns {{ log: (msg: any) => void, warn: (msg: any) => void, error: (msg: any) => void }}
+ */
+export function createDaemonLogger(logFile) {
+  rotateLogIfNeeded(logFile);
+  const writeLine = (level, args) => {
+    const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const text = args.map((item) => (typeof item === 'string' ? item : String(item))).join(' ');
+    try {
+      appendFileSync(logFile, `[${ts}] [${level}] ${text}\n`, 'utf8');
+    } catch {
+      // 忽略日志写入失败
+    }
+  };
+  return {
+    log: (...args) => writeLine('INFO', args),
+    warn: (...args) => writeLine('WARN', args),
+    error: (...args) => writeLine('ERROR', args),
+  };
 }
 
 /**
@@ -275,20 +443,21 @@ function tryStopWatcherByPidFile(pidFile, logger) {
  * @returns {Promise<{ running: boolean, port: number|null, stoppedWatcher: boolean, removedCount: number, results: Array<any> }>}
  */
 export async function removeOnce(options = {}) {
+  const resolvedRoot = resolveRootPath(options.rootDir);
   const {
-    rootDir = DEFAULT_ROOT,
     port,
     portFile = getPortFilePath(),
-    pidFile = join(rootDir, '.watch.pid'),
+    pidFile = join(resolvedRoot, '.watch.pid'),
     fetchImpl = fetch,
     WebSocketImpl = globalThis.WebSocket,
     timeoutMs = 5000,
     logger = console,
   } = options;
 
-  const stoppedWatcher = tryStopWatcherByPidFile(pidFile, logger);
+  const { signaled: stoppedWatcher, pid: watcherPid } = tryStopWatcherByPidFile(pidFile, logger);
   if (stoppedWatcher) {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+    cleanupExitedPidFile(pidFile, watcherPid);
   }
 
   let targetPort;
@@ -324,6 +493,9 @@ export async function removeOnce(options = {}) {
   }
 
   logger.log(`[冬雪莲] 已从 ${results.length} 个 Antigravity 页面移除主题样式与 DOM 标记。`);
+  if (!options.skipAutostartHint && existsSync(join(resolvedRoot, '.runtime', 'install-state.json'))) {
+    logger.log('[冬雪莲] 提示：当前仍启用开机/登录自启，如需彻底取消请执行 npm run uninstall-theme（或双击 uninstall.bat）。');
+  }
   return {
     running: true,
     port: targetPort,
@@ -334,7 +506,7 @@ export async function removeOnce(options = {}) {
 }
 
 /**
- * 启动长期监听会话控制器：自动附加新窗口并热重载 `src/theme.css`。
+ * 启动长期监听会话控制器：自动附加新窗口并热重载样式与汉化配置。
  * @param {object} [options]
  * @returns {Promise<{
  *   stop: () => Promise<void>,
@@ -345,11 +517,11 @@ export async function removeOnce(options = {}) {
  * }>}
  */
 export async function startWatch(options = {}) {
+  const resolvedRoot = resolveRootPath(options.rootDir);
   const {
-    rootDir = DEFAULT_ROOT,
     port,
     portFile = getPortFilePath(),
-    pidFile = join(rootDir, '.watch.pid'),
+    pidFile = join(resolvedRoot, '.watch.pid'),
     avatar = true,
     shift = true,
     i18n = true,
@@ -362,10 +534,13 @@ export async function startWatch(options = {}) {
     logger = console,
   } = options;
 
-  let currentPayload = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
+  let currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
+  let payloadVersion = 0;
   const attached = new Map();
   let stopped = false;
   let syncing = false;
+  let reinjectInFlight = null;
+  let reinjectQueued = false;
   let cssTimer = null;
   let pollTimer = null;
   const fsWatchers = [];
@@ -377,11 +552,71 @@ export async function startWatch(options = {}) {
     logger.warn(`[冬雪莲] 写入 PID 文件失败（${pidFile}）：${err.message}`);
   }
 
+  const runReinjectPass = async () => {
+    if (stopped) {
+      return 0;
+    }
+    try {
+      currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
+      payloadVersion += 1;
+    } catch (err) {
+      logger.warn(`[冬雪莲] 运行时载荷重新编译失败：${err.message}`);
+      return 0;
+    }
+
+    const payload = currentPayload;
+    let updated = 0;
+    for (const [pageId, entry] of Array.from(attached.entries())) {
+      try {
+        if (entry.scriptId) {
+          await entry.session
+            .send('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.scriptId })
+            .catch(() => {});
+        }
+        const registered = await entry.session.send('Page.addScriptToEvaluateOnNewDocument', {
+          source: payload.script,
+        });
+        entry.scriptId = registered?.identifier ?? null;
+        await entry.session.evaluate(payload.script);
+        entry.payloadVersion = payloadVersion;
+        updated += 1;
+      } catch (err) {
+        logger.warn(`[冬雪莲] 热更新页面 ${pageId} 失败：${err.message}`);
+        attached.delete(pageId);
+        await entry.session.close().catch(() => {});
+      }
+    }
+    logger.log(`[冬雪莲] 检测到配置或样式变更，已热重载 ${updated} 个页面。`);
+    return updated;
+  };
+
+  const reinjectNow = async () => {
+    if (stopped) {
+      return 0;
+    }
+    if (reinjectInFlight) {
+      reinjectQueued = true;
+      return reinjectInFlight;
+    }
+    reinjectInFlight = (async () => {
+      let lastUpdated = 0;
+      do {
+        reinjectQueued = false;
+        lastUpdated = await runReinjectPass();
+      } while (reinjectQueued && !stopped);
+      return lastUpdated;
+    })().finally(() => {
+      reinjectInFlight = null;
+    });
+    return reinjectInFlight;
+  };
+
   const syncNow = async () => {
     if (stopped || syncing) {
       return attached.size;
     }
     syncing = true;
+    let needsCatchUp = false;
     try {
       const targetPort = readPort(portFile, { port });
       const pages = await listPages(targetPort, { fetchImpl, timeoutMs });
@@ -394,14 +629,24 @@ export async function startWatch(options = {}) {
         const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
         try {
           await session.connect();
-          const { scriptId } = await injectPageSession(session, currentPayload.script, {
+          const versionAtInject = payloadVersion;
+          const payload = currentPayload;
+          const { scriptId } = await injectPageSession(session, payload.script, {
             pageLabel: page.title || page.id,
             logger,
           });
           session.on('close', () => {
             attached.delete(page.id);
           });
-          attached.set(page.id, { session, scriptId, title: page.title || '' });
+          attached.set(page.id, {
+            session,
+            scriptId,
+            title: page.title || '',
+            payloadVersion: versionAtInject,
+          });
+          if (versionAtInject !== payloadVersion) {
+            needsCatchUp = true;
+          }
           logger.log(`[冬雪莲] 已挂载并注入页面：${page.title || page.id}`);
         } catch (err) {
           await session.close().catch(() => {});
@@ -416,68 +661,50 @@ export async function startWatch(options = {}) {
     } finally {
       syncing = false;
     }
+    if (needsCatchUp && !stopped) {
+      await reinjectNow();
+    }
     return attached.size;
   };
 
-  const reinjectNow = async () => {
-    if (stopped) {
-      return 0;
-    }
-    try {
-      currentPayload = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
-    } catch (err) {
-      logger.warn(`[冬雪莲] 运行时载荷重新编译失败：${err.message}`);
-      return 0;
-    }
-
-    let updated = 0;
-    for (const [pageId, entry] of Array.from(attached.entries())) {
-      try {
-        if (entry.scriptId) {
-          await entry.session
-            .send('Page.removeScriptToEvaluateOnNewDocument', { identifier: entry.scriptId })
-            .catch(() => {});
-        }
-        const registered = await entry.session.send('Page.addScriptToEvaluateOnNewDocument', {
-          source: currentPayload.script,
-        });
-        entry.scriptId = registered?.identifier ?? null;
-        await entry.session.evaluate(currentPayload.script);
-        updated += 1;
-      } catch (err) {
-        logger.warn(`[冬雪莲] 热更新页面 ${pageId} 失败：${err.message}`);
-        attached.delete(pageId);
-        await entry.session.close().catch(() => {});
-      }
-    }
-    logger.log(`[冬雪莲] 检测到配置或样式变更，已热重载 ${updated} 个页面。`);
-    return updated;
-  };
-
-  const watchCandidates = [join(rootDir, 'src', 'theme.css')];
+  const watchCandidates = [join(resolvedRoot, 'src', 'theme.css')];
   if (i18n) {
     watchCandidates.push(
-      join(rootDir, DEFAULT_I18N_RELATIVE_PATH),
-      join(rootDir, DEFAULT_OVERRIDE_RELATIVE_PATH),
+      join(resolvedRoot, DEFAULT_I18N_RELATIVE_PATH),
+      join(resolvedRoot, DEFAULT_OVERRIDE_RELATIVE_PATH),
     );
     if (typeof i18nOverride === 'string' && i18nOverride.trim()) {
       watchCandidates.push(resolve(process.cwd(), i18nOverride.trim()));
     }
   }
   const uniqueWatchPaths = Array.from(new Set(watchCandidates.map((p) => resolve(p))));
+  const dirTargetsMap = new Map();
   for (const targetPath of uniqueWatchPaths) {
-    if (!existsSync(targetPath)) continue;
+    const dir = dirname(targetPath);
+    if (!dirTargetsMap.has(dir)) {
+      dirTargetsMap.set(dir, new Set());
+    }
+    dirTargetsMap.get(dir).add(basename(targetPath));
+  }
+  for (const [dir, targetNames] of dirTargetsMap.entries()) {
+    if (!existsSync(dir)) continue;
     try {
-      const watcher = watch(targetPath, () => {
+      const watcher = watch(dir, (_eventType, filename) => {
         if (stopped) return;
+        if (filename && !targetNames.has(basename(String(filename)))) {
+          return;
+        }
         clearTimeout(cssTimer);
         cssTimer = setTimeout(() => {
           void reinjectNow();
         }, cssDebounceMs);
       });
+      watcher.on?.('error', (err) => {
+        logger.warn(`[冬雪莲] 文件监听异常（${dir}）：${err.message}`);
+      });
       fsWatchers.push(watcher);
     } catch (err) {
-      logger.warn(`[冬雪莲] 启动文件监听失败（${targetPath}）：${err.message}`);
+      logger.warn(`[冬雪莲] 启动文件监听失败（${dir}）：${err.message}`);
     }
   }
 
@@ -503,13 +730,7 @@ export async function startWatch(options = {}) {
       await entry.session.close().catch(() => {});
     }
     attached.clear();
-    if (existsSync(pidFile)) {
-      try {
-        unlinkSync(pidFile);
-      } catch {
-        // 忽略删除 PID 文件异常
-      }
-    }
+    unlinkQuietly(pidFile);
   };
 
   return {
@@ -527,9 +748,26 @@ export async function startWatch(options = {}) {
  * @returns {Promise<void>}
  */
 export async function watchLoop(options = {}) {
-  const logger = options.logger ?? console;
-  const controller = await startWatch(options);
-  logger.log('[冬雪莲] 监听模式已启动（自动追踪新窗口并热重载样式与汉化配置），按 Ctrl+C 退出。');
+  const resolvedRoot = resolveRootPath(options.rootDir);
+  const pidFile = options.pidFile ?? join(resolvedRoot, '.watch.pid');
+  const logFile = options.logFile ?? join(resolvedRoot, 'watch.log');
+  const isDaemon = Boolean(options.daemon);
+  const logger = options.logger ?? (isDaemon ? createDaemonLogger(logFile) : console);
+
+  if (options.ifNotRunning) {
+    const livePid = readLiveWatcherPid(pidFile);
+    if (livePid && livePid !== process.pid) {
+      logger.log(`[冬雪莲] 监听进程已在运行 (PID ${livePid})，跳过重复启动。`);
+      return;
+    }
+  }
+
+  const controller = await startWatch({ ...options, rootDir: resolvedRoot, pidFile, logger });
+  logger.log(
+    isDaemon
+      ? '[冬雪莲] 后台守护监听已启动（自动追踪窗口、客户端重启重连及热重载）。'
+      : '[冬雪莲] 监听模式已启动（自动追踪新窗口并热重载样式与汉化配置），按 Ctrl+C 退出。',
+  );
 
   await new Promise((resolveLoop) => {
     let finishing = false;
@@ -551,14 +789,23 @@ export async function watchLoop(options = {}) {
 
 /**
  * CLI 统一入口执行器：负责 Node 版本检查、参数解析、帮助输出与错误兜底。
- * @param {'inject'|'watch'|'remove'} commandName
- * @param {(options: { port?: number, avatar: boolean, shift: boolean }) => Promise<any>} action
+ * @param {'inject'|'watch'|'remove'|'install'|'uninstall'|'status'} commandName
+ * @param {(options: { port?: number, avatar: boolean, shift: boolean, i18n: boolean, i18nOverride?: string, daemon: boolean, ifNotRunning: boolean, help: boolean }) => Promise<any>} action
  * @param {string[]} [argv]
  */
 export async function runCli(commandName, action, argv = process.argv.slice(2)) {
+  const isDaemonArg = argv.includes('--daemon');
+  const reportFatal = (msg) => {
+    if (isDaemonArg) {
+      createDaemonLogger(join(DEFAULT_ROOT, 'watch.log')).error(msg);
+    } else {
+      console.error(msg);
+    }
+  };
+
   const major = Number.parseInt(process.versions.node.split('.')[0], 10);
   if (Number.isNaN(major) || major < 22) {
-    console.error(`[冬雪莲] 需要 Node.js >= 22.0.0（当前版本：v${process.versions.node}）。`);
+    reportFatal(`[冬雪莲] 需要 Node.js >= 22.0.0（当前版本：v${process.versions.node}）。`);
     process.exitCode = 1;
     return;
   }
@@ -567,7 +814,7 @@ export async function runCli(commandName, action, argv = process.argv.slice(2)) 
   try {
     parsed = parseCliArgs(argv);
   } catch (err) {
-    console.error(`[冬雪莲] 参数错误：${err.message}`);
+    reportFatal(`[冬雪莲] 参数错误：${err.message}`);
     process.exitCode = 1;
     return;
   }
@@ -580,7 +827,7 @@ export async function runCli(commandName, action, argv = process.argv.slice(2)) 
   try {
     await action(parsed);
   } catch (err) {
-    console.error(`[冬雪莲] 执行失败：${err.message}`);
+    reportFatal(`[冬雪莲] 执行失败：${err.message}`);
     process.exitCode = 1;
   }
 }

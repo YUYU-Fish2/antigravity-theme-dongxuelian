@@ -155,7 +155,16 @@ export function restoreI18nDom(root = typeof document !== 'undefined' ? document
     const selector = attrNames
       .flatMap((attr) => [`[data-dxl-orig-${attr}]`, `[data-dxl-orig-${attr}-last]`])
       .join(', ');
-    const attrEls = root.querySelectorAll ? root.querySelectorAll(selector) : [];
+    const attrEls = [];
+    if (root.nodeType === 1 && root.matches && root.matches(selector)) {
+      attrEls.push(root);
+    }
+    if (root.querySelectorAll) {
+      const descendants = root.querySelectorAll(selector);
+      for (let i = 0; i < descendants.length; i++) {
+        attrEls.push(descendants[i]);
+      }
+    }
     for (let i = 0; i < attrEls.length; i++) {
       const el = attrEls[i];
       for (let j = 0; j < attrNames.length; j++) {
@@ -193,17 +202,20 @@ export function createI18nController(dict, version, restoreDomFn) {
   const DICT = dict && typeof dict === 'object' ? dict : {};
   const VERSION = String(version || '0.1.0');
   const RE_CURLY_APOS = /[\u2018\u2019]/g;
+  const DICT_OWN = Object.create(null);
   const DICT_APOS = new Map();
   const DICT_CI = new Map();
 
   for (const k in DICT) {
+    if (!Object.prototype.hasOwnProperty.call(DICT, k)) continue;
     const v = DICT[k];
     if (typeof v !== 'string') continue;
+    DICT_OWN[k] = v;
     const kNorm =
       k.indexOf('\u2019') !== -1 || k.indexOf('\u2018') !== -1
         ? k.replace(RE_CURLY_APOS, "'")
         : k;
-    if (kNorm !== k && !(kNorm in DICT) && !DICT_APOS.has(kNorm)) {
+    if (kNorm !== k && !Object.prototype.hasOwnProperty.call(DICT, kNorm) && !DICT_APOS.has(kNorm)) {
       DICT_APOS.set(kNorm, v);
     }
     const lk = kNorm.toLowerCase();
@@ -212,14 +224,14 @@ export function createI18nController(dict, version, restoreDomFn) {
 
   const dictLookup = (s) => {
     if (!s) return undefined;
-    const exact = DICT[s];
+    const exact = DICT_OWN[s];
     if (typeof exact === 'string') return exact;
     const sNorm =
       s.indexOf('\u2019') !== -1 || s.indexOf('\u2018') !== -1
         ? s.replace(RE_CURLY_APOS, "'")
         : s;
     if (sNorm !== s) {
-      const exactNorm = DICT[sNorm];
+      const exactNorm = DICT_OWN[sNorm];
       if (typeof exactNorm === 'string') return exactNorm;
     }
     const aposAlias = DICT_APOS.get(sNorm);
@@ -266,6 +278,7 @@ export function createI18nController(dict, version, restoreDomFn) {
   };
   const UNIT_MAP_SHORT = { s: '秒', m: '分钟', h: '小时', d: '天', w: '周', mo: '个月', y: '年', yr: '年' };
   const NAMED_PERIOD_MAP = { weekly: '每周', daily: '每日', monthly: '每月' };
+  const LIMIT_TYPE_MAP = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
   const MONTH_SHORT_MAP = {
     jan: 1,
     feb: 2,
@@ -539,6 +552,39 @@ export function createI18nController(dict, version, restoreDomFn) {
   const isInHeaderOrBreadcrumb = (el) =>
     Boolean(el && el.closest && el.closest('header, [data-testid="breadcrumb-segment"]'));
 
+  const replaceTrimmed = (raw, trimmed, next) => (raw === trimmed ? next : raw.replace(trimmed, () => next));
+
+  const matchRuleList = (trimmed, rules) => {
+    for (let i = 0; i < rules.length; i++) {
+      const [re, tpl] = rules[i];
+      if (re.test(trimmed)) return trimmed.replace(re, tpl);
+    }
+    return null;
+  };
+
+  const formatNamedLimitResets = (trimmed) => {
+    const mNamed = trimmed.match(RE_NAMED_LIMIT_RESETS);
+    if (!mNamed) return null;
+    const pZh = NAMED_PERIOD_MAP[mNamed[1].toLowerCase()] || mNamed[1];
+    return `${pZh}限额，${formatCompactDurationZh(mNamed[2])}后重置`;
+  };
+
+  const S_PREFIX_RULES = [
+    [RE_SEE_ALL, '查看全部 ($1)'],
+    [RE_SHOW_BREAKDOWNS, '展开明细 ($1 项)'],
+    [RE_SHOW_MORE_SUBAGENTS, '显示另外 $1 个子 Agent'],
+    [RE_SHOW_EARLIER_STEPS, '展开前 $1 个步骤'],
+    [RE_SORT_FILTER_ACTIVE, '排序与筛选对话（已启用 $1 项）'],
+    [RE_STILL_THINKING_SEC, '仍在思考（$1 秒）'],
+    [RE_SEARCH_GOOGLE, (_, q) => `使用 Google 搜索“${q}”`],
+  ];
+
+  const KEY_SHORTCUT_RULES = [
+    [RE_KEY_QUEUES_AFTER, '$1 当前轮次结束后排队发送'],
+    [RE_KEY_SENDS_IMMEDIATELY, '$1 立即发送'],
+    [RE_KEY_EMPTY_NEXT_QUEUE, '$1 输入为空时发送队列下一条'],
+  ];
+
   const computeTextTranslation = (raw, contextEl) => {
     if (!raw) return null;
     const trimmed = raw.trim();
@@ -555,7 +601,7 @@ export function createI18nController(dict, version, restoreDomFn) {
       if (RE_HAS_CJK.test(replacement) && RE_PURE_ALPHA.test(raw)) {
         return replacement;
       }
-      return raw.replace(trimmed, () => replacement);
+      return replaceTrimmed(raw, trimmed, replacement);
     }
 
     if (!RE_HAS_ALPHA.test(trimmed)) return null;
@@ -565,36 +611,37 @@ export function createI18nController(dict, version, restoreDomFn) {
       const mWinComb = trimmed.match(RE_WINDOW_LIMIT_COMBINED);
       if (mWinComb) {
         const u = UNIT_MAP_SHORT[mWinComb[2].toLowerCase()] || mWinComb[2];
-        return raw.replace(trimmed, () => `${mWinComb[1]} ${u}限额，${formatCompactDurationZh(mWinComb[3])}后重置`);
+        return replaceTrimmed(raw, trimmed, `${mWinComb[1]} ${u}限额，${formatCompactDurationZh(mWinComb[3])}后重置`);
       }
       const mWin = trimmed.match(RE_WINDOW_LIMIT);
       if (mWin) {
         const u = UNIT_MAP_SHORT[mWin[2].toLowerCase()] || mWin[2];
-        return raw.replace(trimmed, () => `${mWin[1]} ${u}限额`);
+        return replaceTrimmed(raw, trimmed, `${mWin[1]} ${u}限额`);
       }
       const mRel = trimmed.match(RE_REL_TIME);
       if (mRel) {
         const unit = REL_UNIT_MAP[mRel[2].toLowerCase()] || mRel[2];
-        return raw.replace(trimmed, () => `${mRel[1]} ${unit}前`);
+        return replaceTrimmed(raw, trimmed, `${mRel[1]} ${unit}前`);
       }
       const mMediaAtt = trimmed.match(RE_MEDIA_ATTACHMENTS);
       if (mMediaAtt) {
         const mediaMap = { image: '图片', audio: '音频', video: '视频' };
         const mediaZh = mediaMap[mMediaAtt[2].toLowerCase()] || mMediaAtt[2];
-        return raw.replace(trimmed, () => `${mMediaAtt[1]} 个${mediaZh}附件`);
+        return replaceTrimmed(raw, trimmed, `${mMediaAtt[1]} 个${mediaZh}附件`);
       }
-      for (let i = 0; i < DIGIT_TEMPLATE_RULES.length; i++) {
-        const [re, tpl] = DIGIT_TEMPLATE_RULES[i];
-        if (re.test(trimmed)) return raw.replace(re, tpl);
-      }
-      return null;
+      const digitHit = matchRuleList(trimmed, DIGIT_TEMPLATE_RULES);
+      return digitHit !== null ? replaceTrimmed(raw, trimmed, digitHit) : null;
     }
 
     if (c0 === 43) {
-      if (RE_PLUS_ATTACHMENTS.test(trimmed)) return raw.replace(RE_PLUS_ATTACHMENTS, '+$1 个附件');
+      if (RE_PLUS_ATTACHMENTS.test(trimmed)) {
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_PLUS_ATTACHMENTS, '+$1 个附件'));
+      }
       const mPlusMore = trimmed.match(RE_PLUS_MORE);
       if (mPlusMore) {
-        return raw.replace(trimmed, () =>
+        return replaceTrimmed(
+          raw,
+          trimmed,
           mPlusMore[2] ? `+${mPlusMore[1]} 更多（显示全部）` : `+${mPlusMore[1]} 更多`,
         );
       }
@@ -603,106 +650,113 @@ export function createI18nController(dict, version, restoreDomFn) {
 
     const firstUpper = trimmed[0].toUpperCase();
     if (firstUpper === 'S') {
-      if (RE_SEE_ALL.test(trimmed)) return raw.replace(RE_SEE_ALL, '查看全部 ($1)');
-      if (RE_SHOW_BREAKDOWNS.test(trimmed)) return raw.replace(RE_SHOW_BREAKDOWNS, '展开明细 ($1 项)');
-      if (RE_SHOW_MORE_SUBAGENTS.test(trimmed)) return raw.replace(RE_SHOW_MORE_SUBAGENTS, '显示另外 $1 个子 Agent');
-      if (RE_SHOW_EARLIER_STEPS.test(trimmed)) return raw.replace(RE_SHOW_EARLIER_STEPS, '展开前 $1 个步骤');
-      if (RE_SORT_FILTER_ACTIVE.test(trimmed)) return raw.replace(RE_SORT_FILTER_ACTIVE, '排序与筛选对话（已启用 $1 项）');
-      if (RE_STILL_THINKING_SEC.test(trimmed)) return raw.replace(RE_STILL_THINKING_SEC, '仍在思考（$1 秒）');
-      if (RE_SEARCH_GOOGLE.test(trimmed)) return raw.replace(RE_SEARCH_GOOGLE, (_, q) => `使用 Google 搜索“${q}”`);
+      const sHit = matchRuleList(trimmed, S_PREFIX_RULES);
+      if (sHit !== null) return replaceTrimmed(raw, trimmed, sHit);
       if (!isInHeaderOrBreadcrumb(contextEl)) {
         const mSearch = trimmed.match(RE_EPHEMERAL_ACTIVE);
-        if (mSearch) return raw.replace(trimmed, () => formatActiveEphemeral(mSearch));
+        if (mSearch) return replaceTrimmed(raw, trimmed, formatActiveEphemeral(mSearch));
       }
     } else if (firstUpper === 'P') {
       if (RE_PERM_DELETE.test(trimmed)) {
-        return raw.replace(RE_PERM_DELETE, (_, target, cnt) => `永久删除 ${target} 及 ${cnt} 个进行中的对话。`);
+        return replaceTrimmed(
+          raw,
+          trimmed,
+          trimmed.replace(RE_PERM_DELETE, (_, target, cnt) => `永久删除 ${target} 及 ${cnt} 个进行中的对话。`),
+        );
       }
     } else if (firstUpper === 'W' || firstUpper === 'M') {
-      const mNamed = trimmed.match(RE_NAMED_LIMIT_RESETS);
-      if (mNamed) {
-        const pZh = NAMED_PERIOD_MAP[mNamed[1].toLowerCase()] || mNamed[1];
-        return raw.replace(trimmed, () => `${pZh}限额，${formatCompactDurationZh(mNamed[2])}后重置`);
-      }
+      const namedHit = formatNamedLimitResets(trimmed);
+      if (namedHit !== null) return replaceTrimmed(raw, trimmed, namedHit);
       if (firstUpper === 'W') {
         if (RE_WORKED_FOR_UPDATES.test(trimmed)) {
-          return raw.replace(RE_WORKED_FOR_UPDATES, (_, dur, cnt) => `已工作 ${dur.trim()} · ${cnt} 条进展`);
+          return replaceTrimmed(
+            raw,
+            trimmed,
+            trimmed.replace(RE_WORKED_FOR_UPDATES, (_, dur, cnt) => `已工作 ${dur.trim()} · ${cnt} 条进展`),
+          );
         }
-        if (RE_WORKED_FOR.test(trimmed)) return raw.replace(RE_WORKED_FOR, '已工作 $1');
+        if (RE_WORKED_FOR.test(trimmed)) {
+          return replaceTrimmed(raw, trimmed, trimmed.replace(RE_WORKED_FOR, '已工作 $1'));
+        }
         if (RE_WAITING_CMD_SEC.test(trimmed)) {
-          return raw.replace(RE_WAITING_CMD_SEC, '正在等待命令完成（最多 $1 秒）');
+          return replaceTrimmed(raw, trimmed, trimmed.replace(RE_WAITING_CMD_SEC, '正在等待命令完成（最多 $1 秒）'));
         }
         const mWel = trimmed.match(RE_HOME_WELCOME_NAME);
-        if (mWel) return raw.replace(trimmed, () => `欢迎回来，${mWel[1].trim()}。我们从哪里继续？`);
+        if (mWel) return replaceTrimmed(raw, trimmed, `欢迎回来，${mWel[1].trim()}。我们从哪里继续？`);
         const mWorkLocal = trimmed.match(RE_WORK_LOCALLY_ON);
-        if (mWorkLocal) return raw.replace(trimmed, () => `在本地 ${mWorkLocal[1].trim()} 中工作`);
+        if (mWorkLocal) return replaceTrimmed(raw, trimmed, `在本地 ${mWorkLocal[1].trim()} 中工作`);
         const mWorkFrom = trimmed.match(RE_WORKTREE_FROM);
         if (mWorkFrom) {
-          return raw.replace(trimmed, () =>
+          return replaceTrimmed(
+            raw,
+            trimmed,
             mWorkFrom[2]
               ? `从 ${mWorkFrom[1].trim()} 创建 Worktree，并复用 ${mWorkFrom[2].trim()}`
               : `从 ${mWorkFrom[1].trim()} 创建 Worktree`,
           );
         }
         const mWorkIn = trimmed.match(RE_WORK_IN_TARGET);
-        if (mWorkIn) return raw.replace(trimmed, () => `在 ${mWorkIn[1].trim()} 中工作`);
+        if (mWorkIn) return replaceTrimmed(raw, trimmed, `在 ${mWorkIn[1].trim()} 中工作`);
       } else if (RE_MARKED_READ.test(trimmed)) {
-        return raw.replace(RE_MARKED_READ, '已将 $1 个对话标为已读');
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_MARKED_READ, '已将 $1 个对话标为已读'));
       }
     } else if (firstUpper === 'T') {
-      if (RE_THOUGHT_FOR.test(trimmed)) return raw.replace(RE_THOUGHT_FOR, '已思考 $1');
-      if (RE_THINKING_FOR.test(trimmed)) return raw.replace(RE_THINKING_FOR, '已思考 $1');
+      if (RE_THOUGHT_FOR.test(trimmed)) return replaceTrimmed(raw, trimmed, trimmed.replace(RE_THOUGHT_FOR, '已思考 $1'));
+      if (RE_THINKING_FOR.test(trimmed)) return replaceTrimmed(raw, trimmed, trimmed.replace(RE_THINKING_FOR, '已思考 $1'));
       if (RE_DELETE_RECORDINGS_CONFIRM.test(trimmed)) {
-        return raw.replace(
-          RE_DELETE_RECORDINGS_CONFIRM,
-          '这将从您的设备中删除 $1 条通话录音（$2），此操作无法撤销。',
+        return replaceTrimmed(
+          raw,
+          trimmed,
+          trimmed.replace(
+            RE_DELETE_RECORDINGS_CONFIRM,
+            '这将从您的设备中删除 $1 条通话录音（$2），此操作无法撤销。',
+          ),
         );
       }
     } else if (firstUpper === 'E' || firstUpper === 'R' || firstUpper === 'L') {
       if (firstUpper === 'R') {
         const mResets = trimmed.match(RE_RESETS_IN);
-        if (mResets) return raw.replace(trimmed, () => `${formatCompactDurationZh(mResets[1])}后重置`);
+        if (mResets) return replaceTrimmed(raw, trimmed, `${formatCompactDurationZh(mResets[1])}后重置`);
       }
       if (RE_EPHEMERAL_SUMMARY.test(trimmed)) {
         const translatedSummary = trimmed
           .split(/,\s*/)
           .map((part) => translateEphemeralClause(part))
           .join('、');
-        return raw.replace(trimmed, () => translatedSummary);
+        return replaceTrimmed(raw, trimmed, translatedSummary);
       }
       const inHdr = isInHeaderOrBreadcrumb(contextEl);
       if (!inHdr) {
         const mActive = trimmed.match(RE_EPHEMERAL_ACTIVE);
-        if (mActive) return raw.replace(trimmed, () => formatActiveEphemeral(mActive));
+        if (mActive) return replaceTrimmed(raw, trimmed, formatActiveEphemeral(mActive));
       }
       if (firstUpper === 'R') {
-        if (RE_RUNNING_FOR.test(trimmed)) return raw.replace(RE_RUNNING_FOR, '已运行 $1');
+        if (RE_RUNNING_FOR.test(trimmed)) return replaceTrimmed(raw, trimmed, trimmed.replace(RE_RUNNING_FOR, '已运行 $1'));
         if (!inHdr && RE_RUNNING_CMD.test(trimmed)) {
-          return raw.replace(RE_RUNNING_CMD, (_, cmd) => `正在运行 ${cmd}`);
+          return replaceTrimmed(raw, trimmed, trimmed.replace(RE_RUNNING_CMD, (_, cmd) => `正在运行 ${cmd}`));
         }
       }
     } else if (firstUpper === 'D') {
-      const mNamedD = trimmed.match(RE_NAMED_LIMIT_RESETS);
-      if (mNamedD) {
-        const pZh = NAMED_PERIOD_MAP[mNamedD[1].toLowerCase()] || mNamedD[1];
-        return raw.replace(trimmed, () => `${pZh}限额，${formatCompactDurationZh(mNamedD[2])}后重置`);
-      }
+      const namedHit = formatNamedLimitResets(trimmed);
+      if (namedHit !== null) return replaceTrimmed(raw, trimmed, namedHit);
       if (RE_DELETED_RECORDINGS.test(trimmed)) {
-        return raw.replace(RE_DELETED_RECORDINGS, '已删除 $1 条录音 ($2)');
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_DELETED_RECORDINGS, '已删除 $1 条录音 ($2)'));
       }
     } else if (firstUpper === 'U') {
-      if (RE_USING_BROWSER_SEC.test(trimmed)) return raw.replace(RE_USING_BROWSER_SEC, '正在操作浏览器 ($1s)');
-      if (RE_UP_NEXT_COUNT.test(trimmed)) return raw.replace(RE_UP_NEXT_COUNT, '接下来 · $1');
+      if (RE_USING_BROWSER_SEC.test(trimmed)) {
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_USING_BROWSER_SEC, '正在操作浏览器 ($1s)'));
+      }
+      if (RE_UP_NEXT_COUNT.test(trimmed)) return replaceTrimmed(raw, trimmed, trimmed.replace(RE_UP_NEXT_COUNT, '接下来 · $1'));
       const mLocalClone = trimmed.match(RE_USES_LOCAL_CLONE);
-      if (mLocalClone) return raw.replace(trimmed, () => `使用本地克隆：${mLocalClone[1].trim()}`);
+      if (mLocalClone) return replaceTrimmed(raw, trimmed, `使用本地克隆：${mLocalClone[1].trim()}`);
       const mUpd = trimmed.match(RE_UPDATED_AT);
-      if (mUpd) return raw.replace(trimmed, () => formatUpdatedAtZh(mUpd[1], mUpd[2]));
+      if (mUpd) return replaceTrimmed(raw, trimmed, formatUpdatedAtZh(mUpd[1], mUpd[2]));
     } else if (firstUpper === 'V') {
       const mVer = trimmed.match(RE_ARIA_VERSION);
-      if (mVer) return raw.replace(trimmed, () => `版本 ${mVer[1].trim()}`);
+      if (mVer) return replaceTrimmed(raw, trimmed, `版本 ${mVer[1].trim()}`);
     } else if (firstUpper === 'Z') {
       if (RE_ZIPPING_FOLDER.test(trimmed)) {
-        return raw.replace(RE_ZIPPING_FOLDER, (_, folder) => `正在打包 ${folder}…`);
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_ZIPPING_FOLDER, (_, folder) => `正在打包 ${folder}…`));
       }
     } else if (firstUpper === 'N') {
       if (trimmed === 'New' || trimmed === 'NEW') {
@@ -713,17 +767,18 @@ export function createI18nController(dict, version, restoreDomFn) {
             !(contextEl && contextEl.closest && contextEl.closest('[data-testid*="model-selector"]')) &&
             (btn.textContent || '').replace(/\badd\b|\+/gi, '').trim() === trimmed,
         );
-        return raw.replace(trimmed, () => (isActionBtn ? '新建' : '新'));
+        return replaceTrimmed(raw, trimmed, isActionBtn ? '新建' : '新');
       }
     } else if (firstUpper === 'O') {
-      if (RE_ORCHESTRATOR_MODEL.test(trimmed)) return raw.replace(RE_ORCHESTRATOR_MODEL, '编排器 ($1)');
+      if (RE_ORCHESTRATOR_MODEL.test(trimmed)) {
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_ORCHESTRATOR_MODEL, '编排器 ($1)'));
+      }
     } else if (firstUpper === 'Y') {
       const mUsed = trimmed.match(RE_USED_LIMIT);
       if (mUsed) {
         const degreeMap = { some: '部分', all: '全部', most: '大部分' };
-        const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
         const degree = degreeMap[mUsed[1].toLowerCase()] || mUsed[1];
-        const type = typeMap[mUsed[2].toLowerCase()] || mUsed[2];
+        const type = LIMIT_TYPE_MAP[mUsed[2].toLowerCase()] || mUsed[2];
         const timeStr = mUsed[3]
           .replace(/\.$/, '')
           .replace(/(\d+)\s*days?/gi, '$1 天')
@@ -732,24 +787,31 @@ export function createI18nController(dict, version, restoreDomFn) {
           .replace(/(\d+)\s*seconds?/gi, '$1 秒')
           .replace(/,\s*/g, ' ')
           .trim();
-        return `您已消耗${degree}${type}额度，将在 ${timeStr} 后完全重置。`;
+        return replaceTrimmed(raw, trimmed, `您已消耗${degree}${type}额度，将在 ${timeStr} 后完全重置。`);
       }
       const mNotUsed = trimmed.match(RE_NOT_USED_LIMIT);
       if (mNotUsed) {
-        const typeMap = { weekly: '每周', '5-hour': '5 小时', 'five-hour': '5 小时', daily: '每日' };
-        const type = typeMap[mNotUsed[1].toLowerCase()] || mNotUsed[1];
-        return `您尚未消耗任何${type}额度。`;
+        const type = LIMIT_TYPE_MAP[mNotUsed[1].toLowerCase()] || mNotUsed[1];
+        return replaceTrimmed(raw, trimmed, `您尚未消耗任何${type}额度。`);
       }
       if (RE_QUOTA_RESET_SWITCH.test(trimmed)) {
-        return raw.replace(
-          RE_QUOTA_RESET_SWITCH,
-          (_, m, dt) => `您的 ${dictLookup(m.trim()) || m.trim()} 配额将于 ${dt} 重置，请切换至其他可用模型以继续。`,
+        return replaceTrimmed(
+          raw,
+          trimmed,
+          trimmed.replace(
+            RE_QUOTA_RESET_SWITCH,
+            (_, m, dt) => `您的 ${dictLookup(m.trim()) || m.trim()} 配额将于 ${dt} 重置，请切换至其他可用模型以继续。`,
+          ),
         );
       }
       if (RE_QUOTA_REACHED_SWITCH.test(trimmed)) {
-        return raw.replace(
-          RE_QUOTA_REACHED_SWITCH,
-          (_, m) => `您的 ${dictLookup(m.trim()) || m.trim()} 配额已用尽，请切换至其他可用模型以继续。`,
+        return replaceTrimmed(
+          raw,
+          trimmed,
+          trimmed.replace(
+            RE_QUOTA_REACHED_SWITCH,
+            (_, m) => `您的 ${dictLookup(m.trim()) || m.trim()} 配额已用尽，请切换至其他可用模型以继续。`,
+          ),
         );
       }
       const mNeedCred = trimmed.match(RE_NEED_CREDITS_MODEL);
@@ -759,21 +821,27 @@ export function createI18nController(dict, version, restoreDomFn) {
         let out = `发送消息需要${amtPart} AI 点数。若需立即继续使用 ${modName}，请购买更多 AI 点数。`;
         if (mNeedCred[3]) out += ` 您套餐的基础配额将于 ${mNeedCred[3]} 刷新。`;
         if (/enable AI Credit overages/i.test(trimmed)) out += ' 若需立即继续使用该模型，请开启 AI 点数超额使用。';
-        return out;
+        return replaceTrimmed(raw, trimmed, out);
       }
       if (RE_BASELINE_QUOTA_REFRESH.test(trimmed)) {
-        return raw.replace(RE_BASELINE_QUOTA_REFRESH, '您套餐的基础配额将于 $1 刷新。');
+        return replaceTrimmed(
+          raw,
+          trimmed,
+          trimmed.replace(RE_BASELINE_QUOTA_REFRESH, '您套餐的基础配额将于 $1 刷新。'),
+        );
       }
     } else if (firstUpper === 'H') {
       const mHey = trimmed.match(RE_HOME_HEY_NAME);
-      if (mHey) return raw.replace(trimmed, () => `嗨，${mHey[1].trim()}，今天想做点什么？`);
+      if (mHey) return replaceTrimmed(raw, trimmed, `嗨，${mHey[1].trim()}，今天想做点什么？`);
     } else if (firstUpper === 'G') {
       const mGood = trimmed.match(RE_HOME_GOOD_SEE_NAME);
-      if (mGood) return raw.replace(trimmed, () => `很高兴见到你，${mGood[1].trim()}。接下来做什么？`);
+      if (mGood) return replaceTrimmed(raw, trimmed, `很高兴见到你，${mGood[1].trim()}。接下来做什么？`);
     } else if (firstUpper === 'A') {
       const mAutoFig = trimmed.match(RE_AUTO_FIG_WORKSPACE);
       if (mAutoFig) {
-        return raw.replace(trimmed, () =>
+        return replaceTrimmed(
+          raw,
+          trimmed,
           `对话开始时自动新建 ${mAutoFig[1]} 工作区${mAutoFig[2] ? `，从 ${mAutoFig[2].trim()} 创建 Worktree` : ''}${mAutoFig[3] ? `，并复用 ${mAutoFig[3].trim()}` : ''}`,
         );
       }
@@ -782,29 +850,29 @@ export function createI18nController(dict, version, restoreDomFn) {
     if (trimmed.length < 220 && trimmed.includes('offload routine steps')) {
       const mOffload = trimmed.match(RE_MODEL_OFFLOAD_DESC);
       if (mOffload) {
-        return raw.replace(
+        return replaceTrimmed(
+          raw,
           trimmed,
-          () => `可将常规步骤分流至 ${mOffload[2]} 执行的 ${mOffload[1]} 编排模型。保持 ${mOffload[3]} 同等质量，消耗更少 Token。`,
+          `可将常规步骤分流至 ${mOffload[2]} 执行的 ${mOffload[1]} 编排模型。保持 ${mOffload[3]} 同等质量，消耗更少 Token。`,
         );
       }
     }
     if (trimmed.length < 160 && trimmed.includes('removed from Antigravity')) {
       const mRemoved = trimmed.match(RE_MODEL_REMOVED_ON);
       if (mRemoved) {
-        return raw.replace(trimmed, () => `${mRemoved[1].trim()} 将于 ${formatEnglishDateZh(mRemoved[2])}从 Antigravity 下线。`);
+        return replaceTrimmed(raw, trimmed, `${mRemoved[1].trim()} 将于 ${formatEnglishDateZh(mRemoved[2])}从 Antigravity 下线。`);
       }
     }
     if (trimmed.length < 80 && (firstUpper === 'G' || firstUpper === 'C' || firstUpper === 'O')) {
       const mPeriodLim = trimmed.match(RE_MODEL_PERIOD_LIMIT);
       if (mPeriodLim) {
         const pZh = NAMED_PERIOD_MAP[mPeriodLim[2].toLowerCase()] || mPeriodLim[2];
-        return raw.replace(trimmed, () => `${mPeriodLim[1].trim()} ${pZh}限额`);
+        return replaceTrimmed(raw, trimmed, `${mPeriodLim[1].trim()} ${pZh}限额`);
       }
     }
     if (trimmed.length < 64) {
-      if (RE_KEY_QUEUES_AFTER.test(trimmed)) return raw.replace(RE_KEY_QUEUES_AFTER, '$1 当前轮次结束后排队发送');
-      if (RE_KEY_SENDS_IMMEDIATELY.test(trimmed)) return raw.replace(RE_KEY_SENDS_IMMEDIATELY, '$1 立即发送');
-      if (RE_KEY_EMPTY_NEXT_QUEUE.test(trimmed)) return raw.replace(RE_KEY_EMPTY_NEXT_QUEUE, '$1 输入为空时发送队列下一条');
+      const keyHit = matchRuleList(trimmed, KEY_SHORTCUT_RULES);
+      if (keyHit !== null) return replaceTrimmed(raw, trimmed, keyHit);
     }
 
     return null;
@@ -1110,8 +1178,14 @@ export function createI18nController(dict, version, restoreDomFn) {
             const m = list[i];
             if (m.type === 'characterData') {
               const t = m.target;
-              if (t && t.parentElement && !isExcludedElement(t.parentElement, batchSafeSet)) {
-                dirtyRoots.add(t);
+              if (t) {
+                const rec = origTextMap.get(t);
+                if (rec && rec.lastVal === t.nodeValue && rec.ver === VERSION) {
+                  continue;
+                }
+                if (t.parentElement && !isExcludedElement(t.parentElement, batchSafeSet)) {
+                  dirtyRoots.add(t);
+                }
               }
             } else if (m.type === 'attributes') {
               const el = m.target;

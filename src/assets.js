@@ -62,15 +62,15 @@ export function loadThemeAssets(rootDir = DEFAULT_ROOT) {
 /**
  * 读取样式模板并内联纸纹与抱书场景资源，生成完整注入 CSS。
  */
-export function buildThemeCss({ rootDir = DEFAULT_ROOT, cssPath } = {}) {
-  const assets = loadThemeAssets(rootDir);
+export function buildThemeCss({ rootDir = DEFAULT_ROOT, cssPath, assets } = {}) {
+  const resolvedAssets = assets ?? loadThemeAssets(rootDir);
   const resolvedCssPath =
     cssPath ??
     (rootDir instanceof URL ? new URL('src/theme.css', rootDir) : join(rootDir, 'src/theme.css'));
   let css = readFileSync(resolvedCssPath, 'utf8');
 
-  css = css.replaceAll(ASSET_SPECS.paper.placeholder, assets.paper.dataUri);
-  css = css.replaceAll(ASSET_SPECS.reading.placeholder, assets.reading.dataUri);
+  css = css.replaceAll(ASSET_SPECS.paper.placeholder, resolvedAssets.paper.dataUri);
+  css = css.replaceAll(ASSET_SPECS.reading.placeholder, resolvedAssets.reading.dataUri);
 
   const leftover = css.match(/__DXL_[A-Z0-9_]+__/g);
   if (leftover) {

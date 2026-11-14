@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -65,6 +66,8 @@ test('readPort 与 parseCliArgs 校验端口、开关与异常参数', () => {
     shift: false,
     i18n: true,
     i18nOverride: undefined,
+    daemon: false,
+    ifNotRunning: false,
     help: false,
   });
   assert.deepEqual(parseCliArgs(['--port=9444', '-h']), {
@@ -73,7 +76,19 @@ test('readPort 与 parseCliArgs 校验端口、开关与异常参数', () => {
     shift: true,
     i18n: true,
     i18nOverride: undefined,
+    daemon: false,
+    ifNotRunning: false,
     help: true,
+  });
+  assert.deepEqual(parseCliArgs(['--daemon', '--if-not-running']), {
+    port: undefined,
+    avatar: true,
+    shift: true,
+    i18n: true,
+    i18nOverride: undefined,
+    daemon: true,
+    ifNotRunning: true,
+    help: false,
   });
   assert.throws(() => parseCliArgs(['--unknown-flag']), /未知参数/);
   assert.throws(() => parseCliArgs(['--port', '70000']), /无效的调试端口号/);
@@ -341,6 +356,152 @@ test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、rem
       '检测到 #ag-custom-fonts 时应打印冲突警告',
     );
   } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('document-start 场景下在 head/body 就绪后自动迁移样式至 head 并完成舞台与头像初始化', () => {
+  const assets = loadThemeAssets(ROOT);
+  const css = buildThemeCss({ rootDir: ROOT });
+  const script = buildInjectScript(css, {
+    avatarDataUri: assets.avatar.dataUri,
+    avatar: true,
+    shift: true,
+    version: '0.1.0',
+  });
+
+  const page = createMockAntigravityPage({ light: true });
+  const savedHead = page.elements.head;
+  const savedBody = page.elements.body;
+  savedHead.remove();
+  savedBody.remove();
+  page.document.head = null;
+  page.document.body = null;
+  page.document.readyState = 'loading';
+
+  const listeners = new Map();
+  page.document.addEventListener = (type, fn) => {
+    if (!listeners.has(type)) listeners.set(type, new Set());
+    listeners.get(type).add(fn);
+  };
+  page.document.removeEventListener = (type, fn) => {
+    listeners.get(type)?.delete(fn);
+  };
+
+  const earlyRes = page.evaluate(script);
+  assert.equal(earlyRes.injected, true);
+  assert.equal(earlyRes.lightMode, false);
+  const earlyStyle = page.document.getElementById('dxl-antigravity-theme');
+  assert.ok(earlyStyle);
+  assert.equal(earlyStyle.parentElement, page.elements.docEl, 'head 尚未出现时样式应暂挂在 html 下');
+
+  page.elements.docEl.appendChild(savedHead);
+  page.elements.docEl.appendChild(savedBody);
+  page.document.head = savedHead;
+  page.document.body = savedBody;
+  page.document.readyState = 'complete';
+  for (const fn of Array.from(listeners.get('DOMContentLoaded') || [])) {
+    listeners.get('DOMContentLoaded').delete(fn);
+    fn();
+  }
+
+  assert.equal(earlyStyle.parentElement, savedHead, 'DOM 就绪后样式应迁入 document.head');
+  assert.equal(page.elements.stage.getAttribute('data-dxl-stage'), 'conversation');
+  assert.equal(page.document.querySelectorAll('[data-dxl-avatar="true"]').length, 1);
+});
+
+test('startWatch 监听目录变化支持新建 user/i18n.override.json 热重载，removeOnce 终止进程并清理 .watch.pid', async () => {
+  const domMap = new Map();
+  const server = await startMockCdpServer({
+    onEvaluate: (pageState, expression) => {
+      if (!domMap.has(pageState.id)) {
+        const page = createMockAntigravityPage({ light: true });
+        const label = page.document.createElement('button');
+        label.appendChild(page.document.createTextNode('New Conversation'));
+        page.elements.sidebar.appendChild(label);
+        page.customLabel = label;
+        domMap.set(pageState.id, page);
+      }
+      return domMap.get(pageState.id).evaluate(expression);
+    },
+  });
+
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-watch-dir-'));
+  const portFile = join(dir, 'DevToolsActivePort');
+  const pidFile = join(dir, '.watch.pid');
+  const tempRoot = join(dir, 'workspace');
+  mkdirSync(join(tempRoot, 'assets', 'characters', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'scenes', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'textures', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'i18n'), { recursive: true });
+  mkdirSync(join(tempRoot, 'src'), { recursive: true });
+  mkdirSync(join(tempRoot, 'user'), { recursive: true });
+
+  cpSync(new URL('../assets/characters/web/avatar.webp', import.meta.url), join(tempRoot, 'assets', 'characters', 'web', 'avatar.webp'));
+  cpSync(new URL('../assets/scenes/web/reading.webp', import.meta.url), join(tempRoot, 'assets', 'scenes', 'web', 'reading.webp'));
+  cpSync(new URL('../assets/textures/web/paper.webp', import.meta.url), join(tempRoot, 'assets', 'textures', 'web', 'paper.webp'));
+  cpSync(new URL('../src/theme.css', import.meta.url), join(tempRoot, 'src', 'theme.css'));
+  writeFileSync(join(tempRoot, 'package.json'), JSON.stringify({ version: '0.1.0' }), 'utf8');
+  writeFileSync(join(tempRoot, 'assets', 'i18n', 'zh-CN.json'), JSON.stringify({ 'New Conversation': '新建对话' }), 'utf8');
+  writeFileSync(portFile, `${server.port}\n`, 'utf8');
+
+  let dummyChild = null;
+  try {
+    server.addPage({ id: 'win-dir', title: 'Antigravity' });
+    const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
+
+    const watcher = await startWatch({
+      rootDir: tempRoot,
+      portFile,
+      pidFile,
+      pollIntervalMs: 5000,
+      cssDebounceMs: 40,
+      logger: silentLogger,
+    });
+    try {
+      const page = domMap.get('win-dir');
+      assert.equal(page.customLabel.textContent, '新建对话');
+
+      // 在启动时 user/i18n.override.json 并不存在，运行期新建后应自动触发热重载
+      writeFileSync(
+        join(tempRoot, 'user', 'i18n.override.json'),
+        JSON.stringify({ 'New Conversation': '目录监听新建热重载' }),
+        'utf8',
+      );
+      const deadline = Date.now() + 2500;
+      while (page.customLabel.textContent !== '目录监听新建热重载' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      assert.equal(page.customLabel.textContent, '目录监听新建热重载');
+
+      const [r1, r2] = await Promise.all([watcher.reinjectNow(), watcher.reinjectNow()]);
+      assert.equal(r1, 1);
+      assert.equal(r2, 1);
+      assert.equal(server.getPageState('win-dir').docScripts.size, 1);
+    } finally {
+      await watcher.stop();
+    }
+
+    // 模拟仍在运行的外部监听进程 + .watch.pid，验证 removeOnce 在终止进程后清理残留 .watch.pid
+    dummyChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    writeFileSync(pidFile, `${dummyChild.pid}\n`, 'utf8');
+    const exitPromise = new Promise((resolveExit) => {
+      dummyChild.once('exit', resolveExit);
+    });
+
+    const removeRes = await removeOnce({ portFile, pidFile, logger: silentLogger });
+    assert.equal(removeRes.stoppedWatcher, true);
+    await exitPromise;
+    assert.equal(existsSync(pidFile), false, 'removeOnce 停止监听进程后应清理 .watch.pid');
+  } finally {
+    if (dummyChild && dummyChild.exitCode === null) {
+      try {
+        dummyChild.kill();
+      } catch {
+        // 忽略清理子进程异常
+      }
+    }
     await server.close();
     rmSync(dir, { recursive: true, force: true });
   }

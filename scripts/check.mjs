@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { buildThemeCss, loadThemeAssets } from '../src/assets.js';
+import { REMOVE_EXPRESSION, buildInjectScript } from '../src/cdp.js';
 import { loadI18nDictionary } from '../src/i18n.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -118,7 +120,16 @@ function assertPackageContract() {
   if (pkg.dependencies || pkg.devDependencies) {
     throw new Error('本项目承诺零第三方依赖，package.json 不应包含 dependencies 或 devDependencies');
   }
-  for (const scriptName of ['inject', 'watch', 'remove', 'test', 'check']) {
+  for (const scriptName of [
+    'inject',
+    'watch',
+    'remove',
+    'install-theme',
+    'uninstall-theme',
+    'status',
+    'test',
+    'check',
+  ]) {
     if (!pkg.scripts?.[scriptName]) {
       throw new Error(`package.json 缺少脚本：${scriptName}`);
     }
@@ -130,6 +141,9 @@ function assertBatchWrappers() {
     ['inject.bat', 'bin\\inject.js'],
     ['watch.bat', 'bin\\watch.js'],
     ['remove.bat', 'bin\\remove.js'],
+    ['install.bat', 'bin\\install.js'],
+    ['uninstall.bat', 'bin\\uninstall.js'],
+    ['status.bat', 'bin\\status.js'],
   ];
   for (const [batName, binTarget] of expected) {
     const batPath = join(ROOT, batName);
@@ -162,8 +176,19 @@ function main() {
 
   const i18n = loadI18nDictionary({ rootDir: ROOT });
 
-  const css = buildThemeCss({ rootDir: ROOT });
+  const css = buildThemeCss({ rootDir: ROOT, assets });
   assertCssIntegrity(css);
+
+  const compiledInject = buildInjectScript(css, {
+    avatarDataUri: assets.avatar.dataUri,
+    avatar: true,
+    shift: true,
+    i18n: true,
+    i18nDict: i18n.dict,
+  });
+  new vm.Script(compiledInject, { filename: 'dxl-inject.compiled.js' });
+  new vm.Script(REMOVE_EXPRESSION, { filename: 'dxl-remove.compiled.js' });
+
   assertBatchWrappers();
 
   console.log(

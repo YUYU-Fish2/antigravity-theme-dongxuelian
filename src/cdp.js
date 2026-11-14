@@ -145,7 +145,7 @@ export class CdpSession {
    * @returns {Promise<this>}
    */
   async connect() {
-    if (this.ws && this.ws.readyState === 1) {
+    if (this.ws && !this.closed && this.ws.readyState === 1) {
       return this;
     }
     this.closed = false;
@@ -167,6 +167,7 @@ export class CdpSession {
       }, this.timeoutMs);
 
       ws.addEventListener('open', () => {
+        if (this.ws !== ws) return;
         if (!settled) {
           settled = true;
           clearTimeout(timer);
@@ -175,6 +176,7 @@ export class CdpSession {
       });
 
       ws.addEventListener('error', (event) => {
+        if (this.ws !== ws) return;
         const reason = event?.message || event?.error?.message || 'WebSocket 连接失败';
         if (!settled) {
           settled = true;
@@ -184,10 +186,12 @@ export class CdpSession {
       });
 
       ws.addEventListener('message', (event) => {
+        if (this.ws !== ws) return;
         void this.#handleMessage(event.data);
       });
 
       ws.addEventListener('close', () => {
+        if (this.ws !== ws) return;
         this.closed = true;
         if (!settled) {
           settled = true;
@@ -323,7 +327,7 @@ export class CdpSession {
    * @returns {Promise<void>}
    */
   async close() {
-    if (!this.ws || this.closed || this.ws.readyState >= 2) {
+    if (!this.ws || this.closed || this.ws.readyState >= 3) {
       this.closed = true;
       return;
     }
@@ -335,12 +339,41 @@ export class CdpSession {
       };
       const timer = setTimeout(done, 400);
       this.ws.addEventListener('close', done, { once: true });
-      try {
-        this.ws.close(1000, 'dxl-theme-done');
-      } catch {
-        done();
+      if (this.ws.readyState < 2) {
+        try {
+          this.ws.close(1000, 'dxl-theme-done');
+        } catch {
+          done();
+        }
       }
     });
+  }
+}
+
+/**
+ * 在浏览器页面上下文中清理冬雪莲主题 DOM 标记、样式与汉化痕迹（零外部闭包依赖）。
+ * @param {string} styleId
+ * @param {Function} restoreDomFn
+ */
+function cleanupDxlDom(styleId, restoreDomFn) {
+  const styleEl = document.getElementById(styleId);
+  if (styleEl) styleEl.remove();
+  const html = document.documentElement;
+  if (html) {
+    html.removeAttribute('data-dxl-theme');
+    html.removeAttribute('data-dxl-shift');
+  }
+  for (const el of document.querySelectorAll('[data-dxl-stage]')) {
+    el.removeAttribute('data-dxl-stage');
+  }
+  for (const el of document.querySelectorAll('[data-dxl-reading-track]')) {
+    el.removeAttribute('data-dxl-reading-track');
+  }
+  for (const el of document.querySelectorAll('[data-dxl-avatar]')) {
+    el.remove();
+  }
+  if (document.body && typeof restoreDomFn === 'function') {
+    restoreDomFn(document.body);
   }
 }
 
@@ -378,6 +411,7 @@ export function buildInjectScript(
 
   return `(() => {
   const CFG = ${JSON.stringify(config)};
+  const cleanupDxlDom = ${cleanupDxlDom.toString()};
   const restoreI18nDom = ${restoreI18nDom.toString()};
   const createI18nController = ${createI18nController.toString()};
 
@@ -406,6 +440,8 @@ export function buildInjectScript(
       styleEl = document.createElement('style');
       styleEl.id = CFG.styleId;
       parent.appendChild(styleEl);
+    } else if (document.head && styleEl.parentElement !== document.head) {
+      document.head.appendChild(styleEl);
     }
     if (styleEl.textContent !== CFG.cssText) {
       styleEl.textContent = CFG.cssText;
@@ -679,28 +715,11 @@ export function buildInjectScript(
       document.removeEventListener('DOMContentLoaded', onDomReady);
       domListenerAttached = false;
     }
-    const styleEl = document.getElementById(CFG.styleId);
-    if (styleEl) styleEl.remove();
-    const html = document.documentElement;
-    if (html) {
-      html.removeAttribute('data-dxl-theme');
-      html.removeAttribute('data-dxl-shift');
-    }
-    for (const el of document.querySelectorAll('[data-dxl-stage]')) {
-      el.removeAttribute('data-dxl-stage');
-    }
-    for (const el of document.querySelectorAll('[data-dxl-reading-track]')) {
-      el.removeAttribute('data-dxl-reading-track');
-    }
-    for (const el of document.querySelectorAll('[data-dxl-avatar]')) {
-      el.remove();
-    }
     if (i18nCtrl) {
-      i18nCtrl.stop({ restore: true });
+      i18nCtrl.stop({ restore: false });
       i18nCtrl = null;
-    } else if (document.body) {
-      restoreI18nDom(document.body);
     }
+    cleanupDxlDom(CFG.styleId, restoreI18nDom);
     if (window.__dxlCleanup === cleanup) {
       delete window.__dxlCleanup;
     }
@@ -740,6 +759,7 @@ export function buildInjectScript(
  * 卸载脚本表达式：清理样式节点、观察器、舞台属性、侧边栏头像与界面汉化痕迹。
  */
 export const REMOVE_EXPRESSION = `(() => {
+  const cleanupDxlDom = ${cleanupDxlDom.toString()};
   const restoreI18nDom = ${restoreI18nDom.toString()};
   const removedStyle = document.getElementById('dxl-antigravity-theme') ? 1 : 0;
   const removedStage = document.querySelectorAll('[data-dxl-stage]').length;
@@ -756,27 +776,7 @@ export const REMOVE_EXPRESSION = `(() => {
       // 忽略清理回调中的异常并继续兜底清扫
     }
   }
-  const styleEl = document.getElementById('dxl-antigravity-theme');
-  if (styleEl) {
-    styleEl.remove();
-  }
-  const html = document.documentElement;
-  if (html) {
-    html.removeAttribute('data-dxl-theme');
-    html.removeAttribute('data-dxl-shift');
-  }
-  for (const el of document.querySelectorAll('[data-dxl-stage]')) {
-    el.removeAttribute('data-dxl-stage');
-  }
-  for (const el of document.querySelectorAll('[data-dxl-reading-track]')) {
-    el.removeAttribute('data-dxl-reading-track');
-  }
-  for (const el of document.querySelectorAll('[data-dxl-avatar]')) {
-    el.remove();
-  }
-  if (document.body) {
-    restoreI18nDom(document.body);
-  }
+  cleanupDxlDom('dxl-antigravity-theme', restoreI18nDom);
   delete window.__dxlCleanup;
   return {
     removed: true,

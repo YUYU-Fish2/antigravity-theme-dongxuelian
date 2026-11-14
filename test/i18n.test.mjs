@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { buildThemeCss, loadThemeAssets } from '../src/assets.js';
 import { REMOVE_EXPRESSION, buildInjectScript } from '../src/cdp.js';
-import { loadI18nDictionary, normalizeOverrideDict } from '../src/i18n.js';
+import { loadI18nDictionary, normalizeOverrideDict, restoreI18nDom } from '../src/i18n.js';
 import { injectOnce, parseCliArgs, prepareRuntimePayload, startWatch } from '../src/runner.js';
 import { startMockCdpServer } from './helpers/mock-cdp.mjs';
 import { createMockAntigravityPage } from './helpers/mock-dom.mjs';
@@ -83,6 +83,8 @@ test('parseCliArgs 与 formatUsage 正确解析 --no-i18n 与 --i18n-override �
     shift: true,
     i18n: false,
     i18nOverride: 'custom.json',
+    daemon: false,
+    ifNotRunning: false,
     help: false,
   });
   assert.deepEqual(parseCliArgs(['--i18n-override=./user/my.json']), {
@@ -91,6 +93,8 @@ test('parseCliArgs 与 formatUsage 正确解析 --no-i18n 与 --i18n-override �
     shift: true,
     i18n: true,
     i18nOverride: './user/my.json',
+    daemon: false,
+    ifNotRunning: false,
     help: false,
   });
   assert.throws(() => parseCliArgs(['--i18n-override']), /需要传入覆盖词典文件路径/);
@@ -353,5 +357,74 @@ test('Mock CDP 端到端验证 --i18n-override 注入与热重载字典更新', 
   } finally {
     await server.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('带前后空白的正则动态文案保留空白并正确汉化与还原，且免疫原型链键污染', () => {
+  const assets = loadThemeAssets(ROOT);
+  const css = buildThemeCss({ rootDir: ROOT });
+  const { dict } = loadI18nDictionary({ rootDir: ROOT });
+  const page = createMockAntigravityPage({ light: true });
+  const { document, elements } = page;
+  const { stage } = elements;
+
+  const paddedCases = [
+    ['  Worked for 12s  ', '  已工作 12s  '],
+    ['\n  5 files changed\n', '\n  5 个文件变更\n'],
+    ['  +2 attachments  ', '  +2 个附件  '],
+    ['  Still thinking, 4 seconds  ', '  仍在思考（4 秒）  '],
+    ['  Thought for 3s  ', '  已思考 3s  '],
+    ['  See all (8)  ', '  查看全部 (8)  '],
+    ['  Weekly limit, resets in 2d 3h  ', '  每周限额，2 天 3 小时后重置  '],
+    ['  Deleted 2 recordings (1.5 MB)  ', '  已删除 2 条录音 (1.5 MB)  '],
+    ['  Enter Sends immediately  ', '  Enter 立即发送  '],
+  ];
+
+  const textNodes = paddedCases.map(([rawText]) => {
+    const span = document.createElement('span');
+    const tn = appendText(document, span, rawText);
+    stage.appendChild(span);
+    return tn;
+  });
+
+  const protoSpan = document.createElement('span');
+  const protoText = appendText(document, protoSpan, 'constructor');
+  stage.appendChild(protoSpan);
+
+  const script = buildInjectScript(css, {
+    avatarDataUri: assets.avatar.dataUri,
+    avatar: true,
+    shift: true,
+    i18n: true,
+    i18nDict: dict,
+    version: '0.1.0',
+  });
+
+  page.evaluate(script);
+
+  paddedCases.forEach(([_, expected], idx) => {
+    assert.equal(textNodes[idx].nodeValue, expected);
+  });
+  assert.equal(protoText.nodeValue, 'constructor', '原型链属性名不应命中词典查找');
+
+  page.evaluate(REMOVE_EXPRESSION);
+  paddedCases.forEach(([rawText], idx) => {
+    assert.equal(textNodes[idx].nodeValue, rawText);
+  });
+
+  // 单独传入带属性的元素根节点给 restoreI18nDom 时，根节点自身属性也应恢复
+  const directEl = document.createElement('button');
+  directEl.setAttribute('title', '系统设置');
+  directEl.setAttribute('data-dxl-orig-title', 'Settings');
+  directEl.setAttribute('data-dxl-orig-title-last', '系统设置');
+  const origDoc = globalThis.document;
+  globalThis.document = document;
+  try {
+    const restored = restoreI18nDom(directEl);
+    assert.equal(restored.restoredAttrs, 1);
+    assert.equal(directEl.getAttribute('title'), 'Settings');
+    assert.equal(directEl.hasAttribute('data-dxl-orig-title'), false);
+  } finally {
+    globalThis.document = origDoc;
   }
 });

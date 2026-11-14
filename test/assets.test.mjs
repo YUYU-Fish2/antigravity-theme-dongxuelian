@@ -23,9 +23,12 @@ test('encodeWebpDataUri 拒绝无效或非 WebP 缓冲区', () => {
 });
 
 test('buildThemeCss 完成全部占位符替换且不留残留占位符', () => {
+  const assets = loadThemeAssets(ROOT);
   const css = buildThemeCss({ rootDir: ROOT });
+  const cssWithPreloaded = buildThemeCss({ rootDir: ROOT, assets });
   assert.ok(!css.includes('__DXL_'), '构建后 CSS 仍含未替换占位符');
   assert.ok(css.includes('data:image/webp;base64,'), '构建后 CSS 未内联 WebP Data URI');
+  assert.equal(cssWithPreloaded, css, '复用预加载 assets 生成的 CSS 应完全一致');
 });
 
 test('buildThemeCss 在模板存在未知占位符时抛错', () => {

@@ -4,10 +4,21 @@
   "description": "面向 Google Antigravity 2.x 桌面客户端的冬雪莲暖纸白彩铅抱书主题（CDP 运行时无损注入）",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YUYU-Fish2/antigravity-theme-dongxuelian.git"
+  },
+  "homepage": "https://github.com/YUYU-Fish2/antigravity-theme-dongxuelian#readme",
+  "bugs": {
+    "url": "https://github.com/YUYU-Fish2/antigravity-theme-dongxuelian/issues"
+  },
   "engines": {
     "node": ">=22.0.0"
   },
   "scripts": {
+    "install-theme": "node bin/install.js",
+    "uninstall-theme": "node bin/uninstall.js",
+    "status": "node bin/status.js",
     "inject": "node bin/inject.js",
     "watch": "node bin/watch.js",
     "remove": "node bin/remove.js",
