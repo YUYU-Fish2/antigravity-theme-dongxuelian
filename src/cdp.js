@@ -551,21 +551,29 @@ export function buildInjectScript(
       return;
     }
 
-    const sidebar =
-      document.querySelector('[data-testid="sidebar-split"] .bg-sidebar.flex-col') ||
-      document.querySelector('.bg-sidebar.flex-col') ||
-      document.querySelector('.bg-sidebar');
-    if (!sidebar) {
+    const appIconBtn = document.querySelector('[data-testid="app-icon-new-conversation-button"]');
+    let headerHost =
+      appIconBtn && !appIconBtn.closest('[role="dialog"]') && !appIconBtn.closest('[aria-modal="true"]')
+        ? appIconBtn
+        : null;
+    if (!headerHost) {
+      const sidebar =
+        document.querySelector('[data-testid="sidebar-split"] .bg-sidebar.flex-col') ||
+        document.querySelector('.bg-sidebar.flex-col') ||
+        document.querySelector('.bg-sidebar');
+      if (sidebar) {
+        headerHost =
+          sidebar.querySelector('[data-testid="sidebar-header"]') ||
+          sidebar.firstElementChild ||
+          sidebar;
+      }
+    }
+    if (!headerHost) {
       for (const node of existingList) {
         node.remove();
       }
       return;
     }
-
-    const headerHost =
-      sidebar.querySelector('[data-testid="sidebar-header"]') ||
-      sidebar.firstElementChild ||
-      sidebar;
 
     if (existingList.length === 1 && existingList[0].parentElement === headerHost) {
       return;

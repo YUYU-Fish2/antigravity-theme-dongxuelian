@@ -203,7 +203,20 @@ test('新版 Antigravity 布局优先将 [data-main-content-body] > .flex-1.min-
   assert.equal(narrowCol.getAttribute('data-dxl-stage'), null, '.mx-auto 阅读列不应被标为主舞台');
   assert.equal(narrowCol.getAttribute('data-dxl-reading-track'), 'true', '聊天阅读列应被标记左移轨道');
   assert.equal(composerWrap.getAttribute('data-dxl-reading-track'), 'true', '输入框包裹层应被标记左移轨道');
-  assert.equal(sidebarTopBar.firstElementChild?.getAttribute('data-dxl-avatar'), 'true', '头像应挂载在左侧栏顶部栏首个子节点');
+  assert.equal(sidebarTopBar.firstElementChild?.getAttribute('data-dxl-avatar'), 'true', '无顶部品牌按钮时应回退至左侧栏首个子节点');
+
+  // 加入原生 app-icon-new-conversation-button 浮层按钮后，触发变更应迁移至该按钮内部并清理回退槽
+  const appIconBtn = document.createElement('button');
+  appIconBtn.setAttribute('data-testid', 'app-icon-new-conversation-button');
+  const nativeSvg = document.createElement('svg');
+  appIconBtn.appendChild(nativeSvg);
+  root.prepend(appIconBtn);
+  for (const obs of page.observers) {
+    obs.trigger();
+  }
+  assert.equal(appIconBtn.firstElementChild?.getAttribute('data-dxl-avatar'), 'true', '头像应原地替换挂载在 app-icon-new-conversation-button 内');
+  assert.equal(sidebarTopBar.querySelectorAll('[data-dxl-avatar]').length, 0, '旧回退占位槽内不应残留重复头像');
+  assert.equal(document.querySelectorAll('[data-dxl-avatar="true"]').length, 1);
 });
 
 test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、removeOnce 清理与未运行容错', async () => {

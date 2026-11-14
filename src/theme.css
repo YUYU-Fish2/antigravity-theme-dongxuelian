@@ -483,3 +483,12 @@ body.theme-light [data-dxl-avatar] > img {
   object-fit: contain;
   pointer-events: none;
 }
+
+/* 方案 A1：原地替换左上角原生新建对话 A 图标，浅色显式隐藏原 SVG，切暗或卸载即恢复 */
+body.theme-light [data-testid="app-icon-new-conversation-button"]:has([data-dxl-avatar="true"]) > svg {
+  display: none !important;
+}
+
+body.theme-light [data-testid="app-icon-new-conversation-button"] > [data-dxl-avatar] {
+  margin: 0 !important;
+}
