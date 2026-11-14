@@ -57,7 +57,7 @@ export function readPackageVersion(rootDir = DEFAULT_ROOT) {
 /**
  * 解析命令行参数。
  * @param {string[]} [argv]
- * @returns {{ port: number|undefined, avatar: boolean, shift: boolean, i18n: boolean, pulse: boolean, i18nOverride: string|undefined, daemon: boolean, ifNotRunning: boolean, help: boolean }}
+ * @returns {{ port: number|undefined, avatar: boolean, shift: boolean, i18n: boolean, i18nOverride: string|undefined, daemon: boolean, ifNotRunning: boolean, help: boolean }}
  */
 export function parseCliArgs(argv = process.argv.slice(2)) {
   const options = {
@@ -65,7 +65,6 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     avatar: true,
     shift: true,
     i18n: true,
-    pulse: true,
     i18nOverride: undefined,
     daemon: false,
     ifNotRunning: false,
@@ -112,10 +111,6 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     }
     if (arg === '--no-i18n') {
       options.i18n = false;
-      continue;
-    }
-    if (arg === '--no-pulse') {
-      options.pulse = false;
       continue;
     }
     if (arg === '--i18n-override') {
@@ -170,7 +165,6 @@ export function formatUsage(commandName = 'inject') {
     '  --no-avatar               不注入侧边栏 24px 冬雪莲头像徽标',
     '  --no-shift                关闭对话流居中阅读偏移微调',
     '  --no-i18n                 关闭界面简体中文汉化（若已汉化则自动还原英文）',
-    '  --no-pulse                关闭内置前端生成脉搏（输出流速胶囊）',
     '  --i18n-override <路径>    指定额外的用户覆盖词典 JSON 文件',
     '  --daemon                  以无交互后台日志模式运行监听（主要用于自启守护）',
     '  --if-not-running          仅在当前无运行中监听进程时启动（避免重复守护）',
@@ -185,7 +179,6 @@ export function formatUsage(commandName = 'inject') {
  * @param {boolean} [options.avatar]
  * @param {boolean} [options.shift]
  * @param {boolean} [options.i18n]
- * @param {boolean} [options.pulse]
  * @param {string} [options.i18nOverride]
  * @returns {{ css: string, script: string, version: string }}
  */
@@ -194,7 +187,6 @@ export function prepareRuntimePayload({
   avatar = true,
   shift = true,
   i18n = true,
-  pulse = true,
   i18nOverride,
 } = {}) {
   const resolvedRoot = resolveRootPath(rootDir);
@@ -208,7 +200,6 @@ export function prepareRuntimePayload({
     shift,
     i18n,
     i18nDict,
-    pulse,
     version,
   });
   return { css, script, version };
@@ -249,7 +240,6 @@ export async function injectOnce(options = {}) {
     avatar = true,
     shift = true,
     i18n = true,
-    pulse = true,
     i18nOverride,
     fetchImpl = fetch,
     WebSocketImpl = globalThis.WebSocket,
@@ -264,7 +254,7 @@ export async function injectOnce(options = {}) {
     return { port: targetPort, injectedCount: 0, results: [] };
   }
 
-  const { script, version } = prepareRuntimePayload({ rootDir, avatar, shift, i18n, pulse, i18nOverride });
+  const { script, version } = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
   const results = [];
 
   for (const page of pages) {
@@ -535,7 +525,6 @@ export async function startWatch(options = {}) {
     avatar = true,
     shift = true,
     i18n = true,
-    pulse = true,
     i18nOverride,
     pollIntervalMs = 2000,
     cssDebounceMs = 150,
@@ -545,7 +534,7 @@ export async function startWatch(options = {}) {
     logger = console,
   } = options;
 
-  let currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, pulse, i18nOverride });
+  let currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
   let payloadVersion = 0;
   const attached = new Map();
   let stopped = false;
@@ -568,7 +557,7 @@ export async function startWatch(options = {}) {
       return 0;
     }
     try {
-      currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, pulse, i18nOverride });
+      currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
       payloadVersion += 1;
     } catch (err) {
       logger.warn(`[冬雪莲] 运行时载荷重新编译失败：${err.message}`);
@@ -801,7 +790,7 @@ export async function watchLoop(options = {}) {
 /**
  * CLI 统一入口执行器：负责 Node 版本检查、参数解析、帮助输出与错误兜底。
  * @param {'inject'|'watch'|'remove'|'install'|'uninstall'|'status'} commandName
- * @param {(options: { port?: number, avatar: boolean, shift: boolean, i18n: boolean, pulse: boolean, i18nOverride?: string, daemon: boolean, ifNotRunning: boolean, help: boolean }) => Promise<any>} action
+ * @param {(options: { port?: number, avatar: boolean, shift: boolean, i18n: boolean, i18nOverride?: string, daemon: boolean, ifNotRunning: boolean, help: boolean }) => Promise<any>} action
  * @param {string[]} [argv]
  */
 export async function runCli(commandName, action, argv = process.argv.slice(2)) {

@@ -103,9 +103,6 @@ function assertCssIntegrity(css) {
     '[data-dxl-stage="conversation"]',
     '[data-dxl-reading-track="true"]',
     '[data-dxl-avatar]',
-    '#dxl-pulse-wrap',
-    '#dxl-pulse-pill',
-    '#dxl-pulse-popover',
   ];
   for (const hook of requiredHooks) {
     if (!css.includes(hook)) {

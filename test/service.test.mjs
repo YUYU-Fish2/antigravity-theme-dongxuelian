@@ -290,7 +290,6 @@ test('normalizeInstallOptions 与 buildWatchDaemonArgs 正确标准化选项并�
       avatar: false,
       shift: false,
       i18n: false,
-      pulse: false,
       i18nOverride: './custom/i18n.json',
     },
     'E:\\示例\\主题目录'
@@ -300,7 +299,6 @@ test('normalizeInstallOptions 与 buildWatchDaemonArgs 正确标准化选项并�
   assert.equal(normalized.avatar, false);
   assert.equal(normalized.shift, false);
   assert.equal(normalized.i18n, false);
-  assert.equal(normalized.pulse, false);
   assert.equal(normalized.i18nOverride, join('E:\\示例\\主题目录', './custom/i18n.json'));
 
   const args = buildWatchDaemonArgs(normalized);
@@ -312,13 +310,12 @@ test('normalizeInstallOptions 与 buildWatchDaemonArgs 正确标准化选项并�
     '--no-avatar',
     '--no-shift',
     '--no-i18n',
-    '--no-pulse',
     '--i18n-override',
     join('E:\\示例\\主题目录', './custom/i18n.json'),
   ]);
 
   const noGuardArgs = buildWatchDaemonArgs(
-    { avatar: true, shift: true, i18n: true, pulse: true },
+    { avatar: true, shift: true, i18n: true },
     { includeIfNotRunning: false }
   );
   assert.deepEqual(noGuardArgs, ['--daemon']);
@@ -425,7 +422,6 @@ test('rotateLogIfNeeded 正确轮转超限日志，--if-not-running 不重复启
       avatar: true,
       shift: true,
       i18n: true,
-      pulse: true,
       i18nOverride: undefined,
       daemon: true,
       ifNotRunning: true,

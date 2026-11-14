@@ -2,13 +2,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createI18nController, restoreI18nDom } from './i18n.js';
-import {
-  cleanupPulseDom,
-  computeRateMetrics,
-  createPulseController,
-  estimateTokens,
-  formatPulsePillLabel,
-} from './pulse.js';
 
 /**
  * 根据操作系统与环境变量推导 Antigravity 的 `DevToolsActivePort` 路径。
@@ -379,9 +372,6 @@ function cleanupDxlDom(styleId, restoreDomFn) {
   for (const el of document.querySelectorAll('[data-dxl-avatar]')) {
     el.remove();
   }
-  for (const el of document.querySelectorAll('#dxl-pulse-wrap, [data-dxl-pulse]')) {
-    el.remove();
-  }
   if (document.body && typeof restoreDomFn === 'function') {
     restoreDomFn(document.body);
   }
@@ -397,19 +387,17 @@ function cleanupDxlDom(styleId, restoreDomFn) {
  * @param {boolean} [options.shift]
  * @param {boolean} [options.i18n]
  * @param {Record<string, string>|null} [options.i18nDict]
- * @param {boolean} [options.pulse]
  * @param {string} [options.version]
  * @returns {string}
  */
 export function buildInjectScript(
   css,
-  { avatarDataUri = '', avatar = true, shift = true, i18n = true, i18nDict = null, pulse = true, version = '0.1.0' } = {},
+  { avatarDataUri = '', avatar = true, shift = true, i18n = true, i18nDict = null, version = '0.1.0' } = {},
 ) {
   if (typeof css !== 'string' || !css.trim()) {
     throw new Error('CSS 内容不能为空');
   }
   const enableI18n = Boolean(i18n);
-  const enablePulse = Boolean(pulse);
   const config = {
     styleId: 'dxl-antigravity-theme',
     cssText: css,
@@ -418,7 +406,6 @@ export function buildInjectScript(
     enableShift: Boolean(shift),
     enableI18n,
     i18nDict: enableI18n && i18nDict && typeof i18nDict === 'object' ? i18nDict : {},
-    enablePulse,
     version: String(version || '0.1.0'),
   };
 
@@ -427,11 +414,6 @@ export function buildInjectScript(
   const cleanupDxlDom = ${cleanupDxlDom.toString()};
   const restoreI18nDom = ${restoreI18nDom.toString()};
   const createI18nController = ${createI18nController.toString()};
-  const estimateTokens = ${estimateTokens.toString()};
-  const computeRateMetrics = ${computeRateMetrics.toString()};
-  const formatPulsePillLabel = ${formatPulsePillLabel.toString()};
-  const cleanupPulseDom = ${cleanupPulseDom.toString()};
-  const createPulseController = ${createPulseController.toString()};
 
   if (typeof window.__dxlCleanup === 'function') {
     try {
@@ -443,9 +425,6 @@ export function buildInjectScript(
 
   let observer = null;
   let i18nCtrl = CFG.enableI18n ? createI18nController(CFG.i18nDict, CFG.version, restoreI18nDom) : null;
-  let pulseCtrl = CFG.enablePulse
-    ? createPulseController({ estimateTokens, computeRateMetrics, formatPulsePillLabel })
-    : null;
   let rafId = 0;
   let rafPending = false;
   let mutating = false;
@@ -673,14 +652,6 @@ export function buildInjectScript(
     }
   };
 
-  const syncPulse = () => {
-    if (pulseCtrl) {
-      pulseCtrl.ensureStarted();
-    } else {
-      cleanupPulseDom();
-    }
-  };
-
   const applyAll = () => {
     if (mutating) return;
     mutating = true;
@@ -690,7 +661,6 @@ export function buildInjectScript(
       syncConversationMarkers();
       syncSidebarAvatar();
       syncI18n();
-      syncPulse();
     } finally {
       mutating = false;
     }
@@ -716,16 +686,8 @@ export function buildInjectScript(
     const target = document.body || document.documentElement;
     if (!target) return;
     if (!observer && typeof MutationObserver === 'function') {
-      observer = new MutationObserver((records) => {
-        if (mutating) return;
-        const onlyPulseSelf =
-          Array.isArray(records) &&
-          records.length > 0 &&
-          records.every((rec) => {
-            const node = rec?.target?.nodeType === 3 ? rec.target.parentElement : rec?.target;
-            return Boolean(node?.closest?.('#dxl-pulse-wrap'));
-          });
-        if (!onlyPulseSelf) {
+      observer = new MutationObserver(() => {
+        if (!mutating) {
           scheduleApply();
         }
       });
@@ -756,10 +718,6 @@ export function buildInjectScript(
     if (i18nCtrl) {
       i18nCtrl.stop({ restore: false });
       i18nCtrl = null;
-    }
-    if (pulseCtrl) {
-      pulseCtrl.stop();
-      pulseCtrl = null;
     }
     cleanupDxlDom(CFG.styleId, restoreI18nDom);
     if (window.__dxlCleanup === cleanup) {
@@ -792,14 +750,13 @@ export function buildInjectScript(
     hasStage: Boolean(document.querySelector('[data-dxl-stage="conversation"]')),
     hasAvatar: Boolean(document.querySelector('[data-dxl-avatar="true"]')),
     hasI18n: CFG.enableI18n,
-    hasPulse: Boolean(document.getElementById('dxl-pulse-pill') && !document.getElementById('dxl-pulse-wrap')?.hasAttribute('hidden')),
     conflicts,
   };
 })();`;
 }
 
 /**
- * 卸载脚本表达式：清理样式节点、观察器、舞台属性、侧边栏头像、脉冲浮层与界面汉化痕迹。
+ * 卸载脚本表达式：清理样式节点、观察器、舞台属性、侧边栏头像与界面汉化痕迹。
  */
 export const REMOVE_EXPRESSION = `(() => {
   const cleanupDxlDom = ${cleanupDxlDom.toString()};
@@ -808,7 +765,6 @@ export const REMOVE_EXPRESSION = `(() => {
   const removedStage = document.querySelectorAll('[data-dxl-stage]').length;
   const removedTrack = document.querySelectorAll('[data-dxl-reading-track]').length;
   const removedAvatar = document.querySelectorAll('[data-dxl-avatar]').length;
-  const removedPulse = document.querySelectorAll('#dxl-pulse-wrap, [data-dxl-pulse]').length;
   const removedI18nAttrs = document.querySelectorAll(
     '[data-dxl-orig-title], [data-dxl-orig-placeholder], [data-dxl-orig-aria-label]',
   ).length;
@@ -828,7 +784,6 @@ export const REMOVE_EXPRESSION = `(() => {
     removedStage,
     removedTrack,
     removedAvatar,
-    removedPulse,
     removedI18nAttrs,
   };
 })();`;

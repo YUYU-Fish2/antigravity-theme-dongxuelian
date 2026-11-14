@@ -77,11 +77,4 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
     css.includes(':not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"])'),
     '缺少内置浏览器 WebContentsView 透明打孔豁免规则',
   );
-  assert.ok(
-    css.includes('#dxl-pulse-wrap') &&
-      css.includes('#dxl-pulse-pill') &&
-      css.includes('#dxl-pulse-popover') &&
-      css.includes('@keyframes dxl-pulse-breathe'),
-    '缺少生成脉搏胶囊与详情浮层样式规则',
-  );
 });
