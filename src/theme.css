@@ -336,6 +336,17 @@ body.theme-light [data-dxl-stage="conversation"]::before {
   }
 }
 
+/* >=1700px 超宽全屏（如 2560 屏）：人物适度内收左移，缩短中段空白并柔化右外沿窗帘边缘 */
+@container dxl-reading (min-width: 1700px) {
+  body.theme-light [data-dxl-stage="conversation"]::before {
+    right: clamp(0px, calc(47cqi - 800px), 340px) !important;
+    mask-image:
+      linear-gradient(90deg, transparent 34%, rgb(0 0 0 / 0.16) 46%, #000 57%, #000 calc(100% - 72px), transparent),
+      linear-gradient(180deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+    mask-composite: intersect;
+  }
+}
+
 /* ==========================================================================
    4. Antigravity 组件适配（输入框、气泡、侧栏、渐隐遮罩、代码卡、弹窗）
    ========================================================================== */

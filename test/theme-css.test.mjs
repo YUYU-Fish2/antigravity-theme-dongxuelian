@@ -66,8 +66,10 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
     css.includes('.surface-composer-card') &&
       css.includes('margin-left: clamp(28px, calc(12cqi - 92px), 220px) !important') &&
       css.includes('right: clamp(-144px, calc(-312px + 17cqi), -28px) !important') &&
-      css.includes('max-width: min(768px, max(520px, 55cqi)) !important'),
-    '缺少输入框纸白卡片、人物右移与左侧阅读列收窄避让规则',
+      css.includes('max-width: min(768px, max(520px, 55cqi)) !important') &&
+      css.includes('@container dxl-reading (min-width: 1700px)') &&
+      css.includes('right: clamp(0px, calc(47cqi - 800px), 340px) !important'),
+    '缺少输入框纸白卡片、人物右移与超宽全屏内收平衡规则',
   );
   assert.ok(
     css.includes(':not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"])'),
