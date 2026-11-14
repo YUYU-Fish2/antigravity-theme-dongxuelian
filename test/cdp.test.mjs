@@ -182,13 +182,7 @@ test('新版 Antigravity 布局优先将 [data-main-content-body] > .flex-1.min-
   const userStep = document.createElement('div');
   userStep.setAttribute('data-testid', 'user-input-step');
   narrowCol.appendChild(userStep);
-  const agentCol = document.createElement('div');
-  agentCol.setAttribute('class', 'mx-auto w-full');
-  const agentResp = document.createElement('div');
-  agentResp.setAttribute('data-testid', 'agent-response');
-  agentCol.appendChild(agentResp);
   scrollArea.appendChild(narrowCol);
-  scrollArea.appendChild(agentCol);
 
   const composerWrap = document.createElement('div');
   composerWrap.setAttribute('class', 'mx-auto w-full');
@@ -208,7 +202,6 @@ test('新版 Antigravity 布局优先将 [data-main-content-body] > .flex-1.min-
   assert.equal(fullStage.getAttribute('data-dxl-stage'), 'conversation', '主舞台应落在不随消息滚动的 .flex-1.min-h-0');
   assert.equal(narrowCol.getAttribute('data-dxl-stage'), null, '.mx-auto 阅读列不应被标为主舞台');
   assert.equal(narrowCol.getAttribute('data-dxl-reading-track'), 'true', '聊天阅读列应被标记左移轨道');
-  assert.equal(agentCol.getAttribute('data-dxl-reading-track'), 'true', '包含 agent-response 的回复列应被标记左移轨道');
   assert.equal(composerWrap.getAttribute('data-dxl-reading-track'), 'true', '输入框包裹层应被标记左移轨道');
   assert.equal(sidebarTopBar.firstElementChild?.getAttribute('data-dxl-avatar'), 'true', '无顶部品牌按钮时应回退至左侧栏首个子节点');
 

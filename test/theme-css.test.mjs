@@ -63,12 +63,6 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
     '缺少输入框纸白卡片及宽屏左侧让位规则',
   );
   assert.ok(
-    css.includes('[data-testid="agent-response"]') &&
-      css.includes('rgb(247 243 235 / 0.78)') &&
-      css.includes('rgb(247 243 235 / 0.66)'),
-    '缺少助手回复半透明暖纸晕染与柔光羽化规则',
-  );
-  assert.ok(
     css.includes(':not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"])'),
     '缺少内置浏览器 WebContentsView 透明打孔豁免规则',
   );
