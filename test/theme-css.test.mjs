@@ -64,6 +64,8 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
   );
   assert.ok(
     css.includes('.surface-composer-card') &&
+      css.includes('--onyx-frame: #F1EDE5 !important') &&
+      !/#antigravity\\\.agentSidePanelInputBox:focus-within\s*\{[^}]*background-color:\s*var\(--dxl-accent\)/s.test(css) &&
       css.includes('margin-left: clamp(28px, calc(12cqi - 92px), 220px) !important') &&
       css.includes('right: clamp(-144px, calc(-312px + 17cqi), -28px) !important') &&
       css.includes('max-width: min(768px, max(520px, 55cqi)) !important') &&

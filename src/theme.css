@@ -78,7 +78,7 @@ body.theme-light {
   --glass: #FFFDF8 !important;
   --glass-border: #D4D7DE !important;
   --glass-highlight: transparent !important;
-  --onyx-frame: #E8E6E1 !important;
+  --onyx-frame: #F1EDE5 !important;
   --onyx-well: #EDECE9 !important;
   --onyx-raised: #FFFDF8 !important;
   --onyx-selected: #DDE8FA !important;
@@ -351,11 +351,12 @@ body.theme-light [data-dxl-stage="conversation"]::before {
    4. Antigravity 组件适配（输入框、气泡、侧栏、渐隐遮罩、代码卡、弹窗）
    ========================================================================== */
 
-/* 输入框外框、内卡纸白与非聚焦轻阴影 */
+/* 输入框外框、内卡纸白与聚焦描边（外框保留浅暖纸色，避免聚焦时深蓝铺满顶部项目/分支栏） */
 body.theme-light #antigravity\.agentSidePanelInputBox {
-  background-color: var(--dxl-border-soft) !important;
+  background-color: var(--onyx-frame) !important;
+  border: 1px solid var(--dxl-border-soft) !important;
   box-shadow: 0 3px 14px rgb(49 58 80 / 0.06) !important;
-  transition: background-color 150ms ease, box-shadow 150ms ease;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 body.theme-light #antigravity\.agentSidePanelInputBox .surface-composer-card,
@@ -364,8 +365,13 @@ body.theme-light .surface-composer > .surface-composer-card {
 }
 
 body.theme-light #antigravity\.agentSidePanelInputBox:focus-within {
-  background-color: var(--dxl-accent) !important;
-  box-shadow: 0 4px 18px rgb(83 107 158 / 0.14) !important;
+  background-color: var(--onyx-frame) !important;
+  border-color: var(--dxl-accent) !important;
+  box-shadow: 0 0 0 1px rgba(83, 107, 158, 0.25), 0 4px 18px rgb(83 107 158 / 0.14) !important;
+}
+
+body.theme-light #antigravity\.agentSidePanelInputBox > :not(.surface-composer-card) {
+  color: var(--dxl-ink-primary) !important;
 }
 
 /* 发送按钮 */
