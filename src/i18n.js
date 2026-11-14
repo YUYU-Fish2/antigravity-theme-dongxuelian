@@ -246,9 +246,9 @@ export function createI18nController(dict, version, restoreDomFn) {
   }
   const origTextMap = window.__dxlOrigTextMap;
 
-  // 保护用户输入、Markdown AI 正文、代码块、终端、编辑器与会话标题不被汉化改写
+  // 保护用户输入、Markdown AI 正文、代码块、终端、编辑器、脉冲浮层与会话标题不被汉化改写
   const CONTAINER_EXCLUDE_SELECTOR =
-    'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], .md-divider-spacing, [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip';
+    'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], .md-divider-spacing, [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip, #dxl-pulse-wrap, #dxl-pulse-pill, #dxl-pulse-popover';
   const TEXT_EXCLUDE_SELECTOR =
     `textarea, input, [contenteditable="true"], [data-testid="conversation-navigator-turn"], ${CONTAINER_EXCLUDE_SELECTOR}`;
 

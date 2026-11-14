@@ -65,6 +65,7 @@ test('readPort 与 parseCliArgs 校验端口、开关与异常参数', () => {
     avatar: false,
     shift: false,
     i18n: true,
+    pulse: true,
     i18nOverride: undefined,
     daemon: false,
     ifNotRunning: false,
@@ -75,6 +76,7 @@ test('readPort 与 parseCliArgs 校验端口、开关与异常参数', () => {
     avatar: true,
     shift: true,
     i18n: true,
+    pulse: true,
     i18nOverride: undefined,
     daemon: false,
     ifNotRunning: false,
@@ -85,9 +87,21 @@ test('readPort 与 parseCliArgs 校验端口、开关与异常参数', () => {
     avatar: true,
     shift: true,
     i18n: true,
+    pulse: true,
     i18nOverride: undefined,
     daemon: true,
     ifNotRunning: true,
+    help: false,
+  });
+  assert.deepEqual(parseCliArgs(['--no-pulse']), {
+    port: undefined,
+    avatar: true,
+    shift: true,
+    i18n: true,
+    pulse: false,
+    i18nOverride: undefined,
+    daemon: false,
+    ifNotRunning: false,
     help: false,
   });
   assert.throws(() => parseCliArgs(['--unknown-flag']), /未知参数/);

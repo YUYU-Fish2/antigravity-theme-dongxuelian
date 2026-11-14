@@ -32,6 +32,7 @@
 - **暖纸白与蓝墨色板**：以 `#F7F3EB` 纸底、`#FFFDF8` 卡片、`#EDECE9` 侧栏与 `#2C4268` / `#5C6578` 蓝墨正文为核心，配套 `#536B9E` / `#435882` 靛蓝交互高亮与 `#DDE4EF` / `#DDE8FA` 用户气泡及选中行。
 - **全页连续纸面**：使用 `paper.webp`（640px 平铺 + 35% 暖纸白柔光层）贯通侧栏、顶栏与对话画布，消除竖直纸板接缝，并柔化对话列表顶/底部渐隐条。
 - **彩铅抱书场景舞台**：将 `reading.webp` 锚定在主对话舞台（`[data-dxl-stage="conversation"]::before`）负层级，配合 `@container dxl-reading` 容器查询在宽屏（`>=1100px`）、窗口（`900–1099px`）与窄栏（`<900px`）自动退让与遮罩柔边，弹出菜单/下拉框保持实色 `#FFFDF8` 不透底。
+- **内置生成脉搏胶囊（默认开启，可 `--no-pulse` 关闭）**：纯前端 DOM 增量观察统计每轮首响耗时（TTFT）与前端渲染估算流速（`~tok/s` / 字速），采用与主题一致的暖纸白胶囊与靛蓝墨详情浮层（展示最近 5 轮记录并支持一键重置）；零后端/进程探测，且在检测到独立指标插件（如 `#ag-pulse-status-bar` / `#ag-live-metrics-pill`）或内置浏览器打孔区域时自动退让隐藏。
 - **可选侧栏头像徽标**：浅色模式下在侧栏顶部展示 24px `avatar.webp` 徽标（可通过 `--no-avatar` 关闭）。
 
 ---
@@ -127,6 +128,7 @@ Windows 用户可直接双击对应 `.bat` 文件，各平台均支持在项目�
 | `--no-avatar` | 禁用侧栏顶部 24px 冬雪莲头像徽标 |
 | `--no-shift` | 关闭 `>=1100px` 宽屏下对话/输入列的左移微调 |
 | `--no-i18n` | 关闭界面简体中文汉化（若已汉化则自动还原原始英文） |
+| `--no-pulse` | 关闭内置生成脉搏（输出流速胶囊与详情浮层） |
 | `--i18n-override <路径>` | 加载额外的用户覆盖词典 JSON 文件（合并于 `user/i18n.override.json` 之后） |
 | `--daemon` | 后台守护模式运行 `watch`，日志输出至 `watch.log`（由 `install-theme` 自动使用） |
 | `--if-not-running` | 若检测到已有存活守护进程则直接退出，防止重复拉起（供开机自启使用） |
@@ -136,6 +138,7 @@ Windows 用户可直接双击对应 `.bat` 文件，各平台均支持在项目�
 
 ```bash
 npm run install-theme -- --no-avatar --no-shift
+npm run install-theme -- --no-pulse
 npm run inject -- --no-i18n
 npm run watch -- --port 9222 --i18n-override ./user/i18n.override.json
 ```
@@ -202,6 +205,13 @@ Antigravity 在退出登录或切换账号时会在内部销毁旧窗口并新�
 
 </details>
 
+<details>
+<summary><strong>6. 内置「生成脉搏」与单独的 Antigravity Pulse 插件有什么区别？会重复显示吗？</strong></summary>
+
+内置「生成脉搏」（[`src/pulse.js`](src/pulse.js)）为本仓库原创 MIT 模块，遵循零外部服务探测原则——仅基于页面 DOM 渲染文字增量与时间窗口估算渲染速率（`~tok/s` 与首响 `TTFT`），不扫描系统进程或内部 RPC 端口，因此显示的是前端渲染级估算值而非模型计费精确 Token；若你同时安装了 `antigravity-pulse` 等独立遥测插件（页面存在 `#ag-pulse-status-bar` 或 `#ag-live-metrics-pill`），内置胶囊会自动隐藏退让，也可通过 `--no-pulse` 显式关闭。
+
+</details>
+
 ---
 
 ## 目录结构
@@ -220,6 +230,7 @@ antigravity-theme-dongxuelian/
 │  ├─ assets.js               # 资源预算校验、Base64 Data URI 编码与 CSS 组装
 │  ├─ cdp.js                  # 零依赖 CDP 会话客户端与幂等页面注入/卸载脚本
 │  ├─ i18n.js                 # UI 汉化词典合并、TreeWalker 实时汉化与可逆还原引擎
+│  ├─ pulse.js                # 纯前端 DOM 增量估算「生成脉搏」胶囊与最近 5 轮速率详情浮层
 │  ├─ runner.js               # injectOnce / startWatch / watchLoop / removeOnce / 日志轮转
 │  ├─ service.js              # 一次安装永久生效、开机自启（Win/macOS/Linux）、状态与卸载服务
 │  └─ theme.css               # Antigravity 浅色令牌、连续纸面与响应式抱书舞台样式
@@ -249,6 +260,7 @@ npm run check
 3. **抱书构图与 Aux Pane**：宽屏与打开右侧辅助面板（Aux Pane）缩小聊天栏宽度时，正文可读性清晰、右侧插画柔和退让且不遮挡按钮。
 4. **弹窗与菜单**：打开模型选择下拉框、设置弹窗或斜杠命令菜单时，卡片背景保持 `#FFFDF8` 实色且无插画穿透。
 5. **无损移除**：执行 `npm run uninstall-theme`（或 `npm run remove`）后页面恢复原生浅色外观且无遗留 DOM 节点。
+6. **生成脉搏与插件避让**：流式对话时输入框右下角温和显示首响与 `~tok/s`，点击展开最近 5 轮详情浮层；若开启独立遥测插件或内置浏览器视图则自动隐藏不叠字。
 
 ---
 

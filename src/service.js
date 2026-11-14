@@ -77,6 +77,7 @@ export function normalizeInstallOptions(options = {}, cwd = process.cwd()) {
     avatar: options.avatar !== false,
     shift: options.shift !== false,
     i18n: options.i18n !== false,
+    pulse: options.pulse !== false,
     i18nOverride: overrideRaw ? resolve(cwd, overrideRaw) : undefined,
   };
 }
@@ -103,6 +104,9 @@ export function buildWatchDaemonArgs(options = {}, { includeIfNotRunning = true 
   }
   if (options.i18n === false) {
     args.push('--no-i18n');
+  }
+  if (options.pulse === false) {
+    args.push('--no-pulse');
   }
   if (options.i18nOverride) {
     args.push('--i18n-override', String(options.i18nOverride));
@@ -616,6 +620,7 @@ export async function installTheme(options = {}) {
     avatar: normalizedOptions.avatar,
     shift: normalizedOptions.shift,
     i18n: normalizedOptions.i18n,
+    pulse: normalizedOptions.pulse,
     i18nOverride: normalizedOptions.i18nOverride,
   });
 
