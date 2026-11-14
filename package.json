@@ -1,0 +1,17 @@
+{
+  "name": "antigravity-theme-dongxuelian",
+  "version": "0.1.0",
+  "description": "面向 Google Antigravity 2.x 桌面客户端的冬雪莲暖纸白彩铅抱书主题（CDP 运行时无损注入）",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "inject": "node bin/inject.js",
+    "watch": "node bin/watch.js",
+    "remove": "node bin/remove.js",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs"
+  }
+}

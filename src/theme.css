@@ -1,0 +1,424 @@
+/* ==========================================================================
+   Antigravity 冬雪莲涂鸦主题（移植自 dsh-theme-dongxuelian preview.6）
+   --------------------------------------------------------------------------
+   设计原则：
+   1. 仅浅色生效（html:has(> body.theme-light) / body.theme-light）：
+      Antigravity 切至深色模式时，所有覆盖自动退出，完整归还原生深色外观。
+   2. 暖纸白 + 灰蓝 + 靛蓝（蓝墨）调色板，不写死字号，不加磨砂玻璃模糊。
+   3. 连续纸面（paper.webp 640px 平铺）贯通侧栏、顶栏与会话画布，无竖直切割。
+   4. 彩铅抱书场景（reading.webp）位于会话舞台负层级 ::before，配合交集柔边与
+      @container dxl-reading 容器查询，宽屏左阅读右人物，窄栏优先保文字清晰。
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 浅色语义令牌与 VS Code / Prism 桥接
+   Antigravity 将内置色板作为内联 style 写在 <html> 上；使用 !important 声明在
+   html:has(> body.theme-light) 上，才能同时覆盖 Tailwind 变量与编辑器桥接变量。
+   ========================================================================== */
+html:has(> body.theme-light),
+body.theme-light {
+  color-scheme: light !important;
+
+  /* ---- 主题自有调色板常量 ---- */
+  --dxl-paper-color: #F7F3EB;
+  --dxl-paper-card: #FFFDF8;
+  --dxl-sidebar-color: #EDECE9;
+  --dxl-ink-primary: #2C4268;
+  --dxl-ink-secondary: #5C6578;
+  --dxl-accent: #536B9E;
+  --dxl-accent-hover: #435882;
+  --dxl-bubble: #DDE4EF;
+  --dxl-selected: #DDE8FA;
+  --dxl-hover: #E4E5EE;
+  --dxl-border-soft: #D4D7DE;
+  --dxl-border-control: #7D879B;
+
+  /* ---- Tailwind / shadcn 语义令牌 ---- */
+  --background: #F7F3EB !important;
+  --content: #F7F3EB !important;
+  --foreground: #2C4268 !important;
+
+  --card: #FFFDF8 !important;
+  --card-foreground: #2C4268 !important;
+  --card-border: #D4D7DE !important;
+
+  --popover: #FFFDF8 !important;
+  --popover-foreground: #2C4268 !important;
+
+  --secondary: #EDECE9 !important;
+  --secondary-foreground: #2C4268 !important;
+  --muted: #EDECE9 !important;
+  --muted-foreground: #5C6578 !important;
+  --placeholder: #5C6578 !important;
+  --accent: #E4E5EE !important;
+  --accent-foreground: #2C4268 !important;
+
+  --border: #D4D7DE !important;
+  --input: #FFFDF8 !important;
+  --ring: #536B9E !important;
+
+  --primary: #536B9E !important;
+  --primary-foreground: #FFFFFF !important;
+  --link: #435882 !important;
+  --code-foreground: #2C4268 !important;
+
+  --sidebar: #EDECE9 !important;
+  --sidebar-foreground: #2C4268 !important;
+  --sidebar-border: #D4D7DE !important;
+  --sidebar-muted: #E4E5EE !important;
+  --sidebar-accent: #E4E5EE !important;
+  --sidebar-accent-foreground: #2C4268 !important;
+  --sidebar-secondary: #DDE8FA !important;
+  --sidebar-secondary-foreground: #2C4268 !important;
+
+  --focus-ring-color: rgba(83, 107, 158, 0.32) !important;
+  --focus-ring-offset-color: #F7F3EB !important;
+  --bg-selection: rgba(83, 107, 158, 0.18) !important;
+  --bg-selection-overlay: rgba(83, 107, 158, 0.14) !important;
+  --bg-cursor-line: rgba(44, 66, 104, 0.04) !important;
+  --fg-cursor: #536B9E !important;
+
+  /* ---- 内嵌 VS Code / Monaco / 终端工作台变量 ---- */
+  --vscode-foreground: #2C4268 !important;
+  --vscode-descriptionForeground: #5C6578 !important;
+  --vscode-icon-foreground: #5C6578 !important;
+  --vscode-focusBorder: #536B9E !important;
+  --vscode-editor-background: #F7F3EB !important;
+  --vscode-editorGutter-background: #F7F3EB !important;
+  --vscode-editorPane-background: #F7F3EB !important;
+  --vscode-editor-foreground: #2C4268 !important;
+  --vscode-editor-selectionBackground: rgba(83, 107, 158, 0.20) !important;
+  --vscode-editor-lineHighlightBackground: rgba(44, 66, 104, 0.04) !important;
+  --vscode-editorCursor-foreground: #536B9E !important;
+  --vscode-editorLineNumber-foreground: #7D879B !important;
+  --vscode-editorLineNumber-activeForeground: #2C4268 !important;
+  --vscode-editorWidget-background: #FFFDF8 !important;
+  --vscode-editorWidget-border: #D4D7DE !important;
+  --vscode-editorHoverWidget-background: #FFFDF8 !important;
+  --vscode-editorSuggestWidget-background: #FFFDF8 !important;
+  --vscode-editorSuggestWidget-selectedBackground: #DDE8FA !important;
+  --vscode-input-background: #FFFDF8 !important;
+  --vscode-input-foreground: #2C4268 !important;
+  --vscode-input-border: #D4D7DE !important;
+  --vscode-dropdown-background: #FFFDF8 !important;
+  --vscode-menu-background: #FFFDF8 !important;
+  --vscode-menu-selectionBackground: #E4E5EE !important;
+  --vscode-quickInput-background: #FFFDF8 !important;
+  --vscode-list-hoverBackground: #E4E5EE !important;
+  --vscode-list-activeSelectionBackground: #DDE8FA !important;
+  --vscode-list-activeSelectionForeground: #2C4268 !important;
+  --vscode-list-inactiveSelectionBackground: #EDECE9 !important;
+  --vscode-list-focusBackground: #DDE8FA !important;
+  --vscode-sideBar-background: #EDECE9 !important;
+  --vscode-sideBarSectionHeader-background: transparent !important;
+  --vscode-titleBar-activeBackground: transparent !important;
+  --vscode-titleBar-inactiveBackground: transparent !important;
+  --vscode-button-background: #536B9E !important;
+  --vscode-button-foreground: #FFFFFF !important;
+  --vscode-button-hoverBackground: #435882 !important;
+  --vscode-badge-background: #536B9E !important;
+  --vscode-badge-foreground: #FFFFFF !important;
+  --vscode-progressBar-background: #536B9E !important;
+  --vscode-textLink-foreground: #435882 !important;
+  --vscode-textLink-activeForeground: #2C4268 !important;
+  --vscode-textCodeBlock-background: #FFFDF8 !important;
+  --vscode-scrollbarSlider-background: rgba(44, 66, 104, 0.18) !important;
+  --vscode-scrollbarSlider-hoverBackground: rgba(44, 66, 104, 0.30) !important;
+  --vscode-scrollbarSlider-activeBackground: rgba(44, 66, 104, 0.42) !important;
+  --vscode-terminal-background: #F7F3EB !important;
+  --vscode-terminal-foreground: #2C4268 !important;
+
+  /* ---- 聊天 Prism 代码块浅色蓝墨语法色 ---- */
+  --syntax-default-fg: #2C4268 !important;
+  --syntax-comment: #7D879B !important;
+  --syntax-punctuation: #5C6578 !important;
+  --syntax-property: #395589 !important;
+  --syntax-tag: #395589 !important;
+  --syntax-constant: #435882 !important;
+  --syntax-deleted: #A84A5C !important;
+  --syntax-number: #536B9E !important;
+  --syntax-string: #3A6B6E !important;
+  --syntax-inserted: #3B7358 !important;
+  --syntax-attr-name: #536B9E !important;
+  --syntax-builtin: #4E5F94 !important;
+  --syntax-operator: #5C6578 !important;
+  --syntax-variable: #2C4268 !important;
+  --syntax-attr-value: #3A6B6E !important;
+  --syntax-keyword: #3F578D !important;
+  --syntax-function: #335D8A !important;
+  --syntax-class-name: #2C4268 !important;
+  --syntax-regex: #435882 !important;
+}
+
+/* ==========================================================================
+   2. 全页连续纸面（640px 纤维平铺 + 35% 暖纸白遮罩）
+   ========================================================================== */
+body.theme-light,
+body.theme-light #root,
+body.theme-light .bg-sidebar,
+body.theme-light [role="navigation"][aria-label="Sidebar"] {
+  background-color: #F7F3EB !important;
+  background-image:
+    linear-gradient(rgb(250 245 235 / 0.35), rgb(250 245 235 / 0.35)),
+    url("__DXL_PAPER_URI__") !important;
+  background-repeat: repeat !important;
+  background-size: auto, 640px 640px !important;
+}
+
+/* 保持会话滚动列与标题栏透明，透出整页纸面，消除竖直纸板切割 */
+body.theme-light #root > div,
+body.theme-light main,
+body.theme-light [data-dxl-stage="conversation"],
+body.theme-light [class*="titlebar"],
+body.theme-light [class*="title-bar"],
+body.theme-light [data-testid="title-menu-bar"] {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+body.theme-light [class*="titlebar"],
+body.theme-light [class*="title-bar"],
+body.theme-light [data-testid="title-menu-bar"] {
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* ==========================================================================
+   3. 彩铅抱书场景舞台与响应式构图（移植自 P11 / P12）
+   ========================================================================== */
+body.theme-light [data-dxl-stage="conversation"] {
+  position: relative !important;
+  isolation: isolate;
+  container-name: dxl-reading;
+  container-type: inline-size;
+}
+
+body.theme-light [data-dxl-stage="conversation"]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: transparent;
+  background-image: url("__DXL_READING_URI__");
+  background-repeat: no-repeat;
+  background-position: right -150px center;
+  background-size: auto min(100%, 720px);
+  mask-image:
+    linear-gradient(90deg, transparent, #000 22%),
+    linear-gradient(transparent, #000 64px, #000 calc(100% - 64px), transparent);
+  mask-composite: intersect;
+}
+
+/* 窄列优先保正文清晰，只减弱插画层墨迹，不降低文字与控件不透明度 */
+@container dxl-reading (max-width: 899.98px) {
+  body.theme-light [data-dxl-stage="conversation"]::before {
+    background-size: auto 58%;
+    background-position: right -110px center;
+    mask-image:
+      linear-gradient(90deg, transparent 60%, rgb(0 0 0 / 0.03) 76%, rgb(0 0 0 / 0.10) 90%, rgb(0 0 0 / 0.24)),
+      linear-gradient(transparent, #000 64px, #000 calc(100% - 64px), transparent);
+    mask-composite: intersect;
+  }
+}
+
+@container dxl-reading (max-width: 640px) {
+  body.theme-light [data-dxl-stage="conversation"]::before {
+    background-size: auto 50%;
+    background-position: right -84px center;
+    mask-image:
+      linear-gradient(90deg, transparent 68%, rgb(0 0 0 / 0.02) 82%, rgb(0 0 0 / 0.08) 94%, rgb(0 0 0 / 0.20)),
+      linear-gradient(transparent, #000 48px, #000 calc(100% - 48px), transparent);
+    mask-composite: intersect;
+  }
+}
+
+/* 900–1099px 窗口模式：复刻 P12 连续纸面 + 人物向右微偏避开主要阅读列 */
+@container dxl-reading (min-width: 900px) and (max-width: 1099.98px) {
+  body.theme-light [data-dxl-stage="conversation"]::before {
+    inset: auto;
+    top: 50%;
+    right: -144px;
+    width: auto;
+    height: min(calc(100% - 32px), 1280px);
+    aspect-ratio: 3 / 2;
+    transform: translateY(-50%);
+    background-position: center;
+    background-size: 100% 100%;
+    mask-image:
+      linear-gradient(90deg, transparent 42%, rgb(0 0 0 / 0.12) 50%, #000 65%, #000 calc(100% - 64px), transparent),
+      linear-gradient(180deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+    mask-composite: intersect;
+  }
+}
+
+/* >=1100px 宽屏：1920px 共同舞台 + 左阅读右人物构图 */
+@container dxl-reading (min-width: 1100px) {
+  body.theme-light [data-dxl-stage="conversation"]::before {
+    inset: auto;
+    top: 50%;
+    right: calc(max(0px, (100% - 1920px) / 2) - 24px);
+    width: auto;
+    height: min(calc(100% - 32px), 1280px);
+    aspect-ratio: 3 / 2;
+    transform: translateY(-50%);
+    background-position: center;
+    background-size: 100% 100%;
+    mask-image:
+      linear-gradient(90deg, transparent 42%, rgb(0 0 0 / 0.12) 50%, #000 65%, #000 calc(100% - 64px), transparent),
+      linear-gradient(180deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+    mask-composite: intersect;
+  }
+
+  /* 仅当开启宽屏左阅读偏移且未传入 data-dxl-shift="off" 时，将居中的阅读/输入列微向左让出右侧插画区 */
+  html:not([data-dxl-shift="off"]) body.theme-light [data-dxl-stage="conversation"] [data-dxl-reading-track="true"] {
+    margin-left: clamp(24px, 4cqi, 64px) !important;
+    margin-right: auto !important;
+  }
+}
+
+/* ==========================================================================
+   4. Antigravity 组件适配（输入框、气泡、侧栏、渐隐遮罩、代码卡、弹窗）
+   ========================================================================== */
+
+/* 输入框外框与非聚焦轻纸卡阴影 */
+body.theme-light #antigravity\.agentSidePanelInputBox {
+  background-color: var(--dxl-border-soft) !important;
+  box-shadow: 0 3px 14px rgb(49 58 80 / 0.06) !important;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+body.theme-light #antigravity\.agentSidePanelInputBox:focus-within {
+  background-color: var(--dxl-accent) !important;
+  box-shadow: 0 4px 18px rgb(83 107 158 / 0.14) !important;
+}
+
+/* 发送按钮 */
+body.theme-light [data-testid="send-button"]:not(:disabled) {
+  background-color: var(--dxl-accent) !important;
+  color: #FFFFFF !important;
+}
+
+body.theme-light [data-testid="send-button"]:not(:disabled):hover {
+  background-color: var(--dxl-accent-hover) !important;
+}
+
+/* 用户消息气泡 */
+body.theme-light [data-testid="user-input-step"] {
+  --card: var(--dxl-bubble) !important;
+  --color-card: var(--dxl-bubble) !important;
+  --card-border: var(--dxl-border-soft) !important;
+  --color-card-border: var(--dxl-border-soft) !important;
+}
+
+/* 侧栏会话行与选中态 */
+body.theme-light .bg-sidebar [data-testid="conversation-row-sidebar"],
+body.theme-light .bg-sidebar [data-testid="conversation-row-sidebar"] span,
+body.theme-light .bg-sidebar button[data-testid="project-header"],
+body.theme-light .bg-sidebar button[data-testid="project-header"] span {
+  color: var(--dxl-ink-primary) !important;
+}
+
+body.theme-light .bg-sidebar [data-testid="conversation-row-sidebar"][data-selected="true"],
+body.theme-light .bg-sidebar [data-testid="conversation-row-sidebar"][aria-selected="true"] {
+  background-color: var(--dxl-selected) !important;
+  color: var(--dxl-ink-primary) !important;
+}
+
+/* 悬停态 */
+body.theme-light [class~="hover:bg-muted"]:hover,
+body.theme-light [class~="hover:bg-sidebar-muted"]:hover,
+body.theme-light [class~="hover:bg-secondary"]:hover,
+body.theme-light [class~="hover:bg-sidebar-secondary"]:hover,
+body.theme-light [class~="hover:bg-accent"]:hover,
+body.theme-light [class~="hover:bg-sidebar-accent"]:hover {
+  background-color: var(--dxl-hover) !important;
+}
+
+/* 对话流顶部分组 sticky 渐隐与底部渐隐条：改用暖纸白，消除异色灰条 */
+body.theme-light [class*="after:from-background"]::after {
+  background-image: linear-gradient(rgb(247 243 235 / 0.88), transparent) !important;
+}
+
+body.theme-light [class~="bottom-0"][class~="inset-x-4"][class~="pointer-events-none"] {
+  background-image: linear-gradient(to top, rgb(247 243 235 / 0.90), transparent) !important;
+}
+
+/* Markdown 代码块、行内代码、引用块 */
+body.theme-light pre,
+body.theme-light [data-testid="planner-response-text"] pre {
+  background-color: var(--dxl-paper-card) !important;
+  border: 1px solid var(--dxl-border-soft) !important;
+}
+
+body.theme-light [data-testid="planner-response-text"] code:not(pre code) {
+  background-color: var(--dxl-sidebar-color) !important;
+  color: var(--dxl-ink-primary) !important;
+  border: 1px solid var(--dxl-border-soft) !important;
+  border-radius: 5px !important;
+  padding: 1px 5px !important;
+}
+
+body.theme-light [data-testid="planner-response-text"] blockquote {
+  background-color: rgb(255 253 248 / 0.85) !important;
+  border-left: 3px solid var(--dxl-accent) !important;
+  color: var(--dxl-ink-primary) !important;
+}
+
+body.theme-light [data-testid="planner-response-text"] a {
+  color: var(--dxl-accent-hover) !important;
+}
+
+/* 菜单、下拉框、设置弹窗保持实色纸白卡片，不被底层插画穿透 */
+body.theme-light [role="menu"],
+body.theme-light [role="listbox"],
+body.theme-light .bg-popover,
+body.theme-light [data-radix-popper-content-wrapper] [role="menu"],
+body.theme-light .bg-background.rounded-2xl.shadow-2xl {
+  background-color: var(--dxl-paper-card) !important;
+  border-color: var(--dxl-border-soft) !important;
+}
+
+/* 滚动条滑块 */
+body.theme-light [data-testid="overlay-scrollbar-thumb"] {
+  background-color: rgba(44, 66, 104, 0.20) !important;
+}
+
+body.theme-light [data-expanded="true"] [data-testid="overlay-scrollbar-thumb"],
+body.theme-light [data-testid="overlay-scrollbar-thumb"]:hover {
+  background-color: rgba(44, 66, 104, 0.36) !important;
+}
+
+/* 选区与键盘焦点 */
+body.theme-light ::selection {
+  background-color: rgba(83, 107, 158, 0.22);
+}
+
+body.theme-light :is(button, a, [role="button"], [role="tab"], [role="menuitem"], [role="option"]):focus-visible {
+  outline: 2px solid var(--dxl-accent) !important;
+  outline-offset: 2px !important;
+}
+
+/* 24px 冬雪莲侧栏品牌头像：仅浅色显式展示 */
+[data-dxl-avatar] {
+  display: none;
+}
+
+body.theme-light [data-dxl-avatar] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+body.theme-light [data-dxl-avatar] > img {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  pointer-events: none;
+}

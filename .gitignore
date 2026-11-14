@@ -1,0 +1,5 @@
+node_modules/
+.watch.pid
+watch.log
+.research/
+*.tgz
