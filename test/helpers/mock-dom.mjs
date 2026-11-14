@@ -1,16 +1,55 @@
 import vm from 'node:vm';
 
+const NodeFilter = {
+  SHOW_ALL: -1,
+  SHOW_ELEMENT: 1,
+  SHOW_TEXT: 4,
+  FILTER_ACCEPT: 1,
+  FILTER_REJECT: 2,
+  FILTER_SKIP: 3,
+};
+
+/**
+ * 极简内存文本节点实现，配合 `MockElement` 与 `createTreeWalker` 测试文本汉化与还原。
+ */
+export class MockTextNode {
+  constructor(value = '') {
+    this.nodeType = 3;
+    this.nodeValue = String(value);
+    this.parentElement = null;
+  }
+
+  get parentNode() {
+    return this.parentElement;
+  }
+
+  get isConnected() {
+    let cur = this;
+    while (cur.parentElement) {
+      cur = cur.parentElement;
+    }
+    return cur.tagName === 'HTML';
+  }
+
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.childNodes = this.parentElement.childNodes.filter((node) => node !== this);
+    this.parentElement = null;
+  }
+}
+
 /**
  * 极简内存 DOM 实现，用于在 `node:vm` 中真实执行 `buildInjectScript` 与 `REMOVE_EXPRESSION`，
- * 验证样式标签、浅/深色切换、对话舞台定位、弹窗排除与彻底清理，不依赖任何第三方 DOM 库。
+ * 验证样式标签、浅/深色切换、对话舞台定位、弹窗排除、界面汉化与彻底清理，不依赖任何第三方 DOM 库。
  */
 export class MockElement {
   constructor(tagName, attrs = {}) {
+    this.nodeType = 1;
     this.tagName = tagName.toUpperCase();
     this.attributes = new Map();
-    this.children = [];
+    this.childNodes = [];
     this.parentElement = null;
-    this.textContent = '';
+    this._textContent = '';
     this.src = '';
     this.alt = '';
     this.width = 0;
@@ -43,6 +82,39 @@ export class MockElement {
     this.setAttribute('class', String(val));
   }
 
+  get parentNode() {
+    return this.parentElement;
+  }
+
+  get isConnected() {
+    let cur = this;
+    while (cur.parentElement) {
+      cur = cur.parentElement;
+    }
+    return cur.tagName === 'HTML';
+  }
+
+  get children() {
+    return this.childNodes.filter((node) => node.nodeType === 1);
+  }
+
+  get textContent() {
+    if (this.childNodes.length === 0) {
+      return this._textContent;
+    }
+    return this.childNodes
+      .map((node) => (node.nodeType === 3 ? node.nodeValue : node.textContent))
+      .join('');
+  }
+
+  set textContent(val) {
+    for (const child of this.childNodes) {
+      child.parentElement = null;
+    }
+    this.childNodes = [];
+    this._textContent = String(val ?? '');
+  }
+
   get firstElementChild() {
     return this.children[0] || null;
   }
@@ -52,7 +124,7 @@ export class MockElement {
       child.remove();
     }
     child.parentElement = this;
-    this.children.push(child);
+    this.childNodes.push(child);
     return child;
   }
 
@@ -61,13 +133,13 @@ export class MockElement {
       child.remove();
     }
     child.parentElement = this;
-    this.children.unshift(child);
+    this.childNodes.unshift(child);
     return child;
   }
 
   remove() {
     if (!this.parentElement) return;
-    this.parentElement.children = this.parentElement.children.filter((node) => node !== this);
+    this.parentElement.childNodes = this.parentElement.childNodes.filter((node) => node !== this);
     this.parentElement = null;
   }
 
@@ -87,10 +159,16 @@ export class MockElement {
     return this.attributes.has(name);
   }
 
+  matches(selector) {
+    const parts = splitSelectorList(selector);
+    return parts.some((sel) => matchesComplexSelector(this, sel, this));
+  }
+
   closest(selector) {
+    const parts = splitSelectorList(selector);
     let cur = this;
     while (cur) {
-      if (matchesSimpleSelector(cur, selector)) return cur;
+      if (parts.some((sel) => matchesComplexSelector(cur, sel, cur))) return cur;
       cur = cur.parentElement;
     }
     return null;
@@ -135,44 +213,98 @@ function createClassList(el) {
 }
 
 function splitSelectorList(selector) {
-  return selector
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const parts = [];
+  let cur = '';
+  let bracketDepth = 0;
+  let quote = '';
+  for (let i = 0; i < selector.length; i++) {
+    const ch = selector[i];
+    if (quote) {
+      cur += ch;
+      if (ch === quote && selector[i - 1] !== '\\') quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      cur += ch;
+    } else if (ch === '[') {
+      bracketDepth += 1;
+      cur += ch;
+    } else if (ch === ']') {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      cur += ch;
+    } else if (ch === ',' && bracketDepth === 0) {
+      if (cur.trim()) parts.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+function matchSingleAtom(el, atom, scopeEl = null) {
+  if (atom === ':scope') return el === scopeEl;
+  if (atom === ':first-child') {
+    return el.parentElement?.firstElementChild === el;
+  }
+  if (atom.startsWith('#')) {
+    return el.id === atom.slice(1).replace(/\\\./g, '.');
+  }
+  if (atom.startsWith('.')) {
+    return el.classList.contains(atom.slice(1));
+  }
+  const attrMatch = atom.match(/^\[([a-zA-Z0-9_-]+)(?:(=|\^=|\*=)"([^"]*)")?\]$/);
+  if (attrMatch) {
+    const [, attrName, op, expected] = attrMatch;
+    const actual = el.getAttribute(attrName);
+    if (actual === null) return false;
+    if (!op) return true;
+    if (op === '=') return actual === expected;
+    if (op === '^=') return actual.startsWith(expected);
+    if (op === '*=') return actual.includes(expected);
+    return false;
+  }
+  return el.tagName === atom.toUpperCase();
 }
 
 function matchesSimpleSelector(el, token, scopeEl = null) {
+  if (!el || el.nodeType !== 1) return false;
   const normalized = token.replace(/\\\\\./g, '\\.');
   if (normalized === ':scope') return el === scopeEl;
-  if (normalized === '.bg-sidebar') return el.classList.contains('bg-sidebar');
-  if (normalized === '.outline-none') return el.classList.contains('outline-none');
-  if (normalized === '.outline-none[style*="container-type"]') {
-    return (
-      el.classList.contains('outline-none') &&
-      (el.getAttribute('style') || '').includes('container-type')
-    );
-  }
-  if (normalized === 'div:first-child') {
-    return el.tagName === 'DIV' && el.parentElement?.firstElementChild === el;
-  }
   if (normalized === '#antigravity\\.agentSidePanelInputBox') {
     return el.id === 'antigravity.agentSidePanelInputBox';
   }
-  const attrEq = normalized.match(/^\[([a-zA-Z0-9_-]+)="([^"]*)"\]$/);
-  if (attrEq) {
-    return el.getAttribute(attrEq[1]) === attrEq[2];
+  const atoms = [];
+  let i = 0;
+  while (i < normalized.length) {
+    const ch = normalized[i];
+    if (ch === '[') {
+      const close = normalized.indexOf(']', i);
+      if (close === -1) return false;
+      atoms.push(normalized.slice(i, close + 1));
+      i = close + 1;
+    } else if (ch === ':' && normalized.startsWith(':first-child', i)) {
+      atoms.push(':first-child');
+      i += ':first-child'.length;
+    } else if (ch === '.' || ch === '#') {
+      let j = i + 1;
+      while (j < normalized.length && !'.#[:'.includes(normalized[j])) {
+        j += 1;
+      }
+      atoms.push(normalized.slice(i, j));
+      i = j;
+    } else {
+      let j = i;
+      while (j < normalized.length && !'.#[:'.includes(normalized[j])) {
+        j += 1;
+      }
+      atoms.push(normalized.slice(i, j));
+      i = j;
+    }
   }
-  const attrPresent = normalized.match(/^\[([a-zA-Z0-9_-]+)\]$/);
-  if (attrPresent) {
-    return el.hasAttribute(attrPresent[1]);
-  }
-  if (/^\.[A-Za-z0-9_.-]+$/.test(normalized)) {
-    return normalized
-      .slice(1)
-      .split('.')
-      .every((cls) => el.classList.contains(cls));
-  }
-  return el.tagName === normalized.toUpperCase();
+  return atoms.length > 0 && atoms.every((atom) => matchSingleAtom(el, atom, scopeEl));
 }
 
 function tokenizeSelector(selector) {
@@ -297,6 +429,55 @@ export function createMockAntigravityPage({ light = true } = {}) {
     head,
     body,
     createElement: (tag) => new MockElement(tag),
+    createTextNode: (text) => new MockTextNode(text),
+    createTreeWalker: (rootNode, whatToShow = NodeFilter.SHOW_ALL, filter = null) => {
+      const collect = (node, out) => {
+        if (!node || !Array.isArray(node.childNodes)) return;
+        for (let i = 0; i < node.childNodes.length; i++) {
+          const child = node.childNodes[i];
+          const typeMatches =
+            whatToShow === NodeFilter.SHOW_ALL ||
+            (child.nodeType === 1 && (whatToShow & NodeFilter.SHOW_ELEMENT) !== 0) ||
+            (child.nodeType === 3 && (whatToShow & NodeFilter.SHOW_TEXT) !== 0);
+
+          let verdict = NodeFilter.FILTER_ACCEPT;
+          if (!typeMatches) {
+            verdict = NodeFilter.FILTER_SKIP;
+          } else if (filter && typeof filter.acceptNode === 'function') {
+            verdict = filter.acceptNode(child);
+          }
+
+          if (verdict === NodeFilter.FILTER_REJECT) {
+            continue;
+          }
+          if (verdict === NodeFilter.FILTER_ACCEPT) {
+            out.push(child);
+          }
+          if (child.nodeType === 1) {
+            collect(child, out);
+          }
+        }
+      };
+
+      let list = null;
+      let idx = -1;
+      const walker = {
+        currentNode: rootNode,
+        nextNode() {
+          if (list === null) {
+            list = [];
+            collect(rootNode, list);
+          }
+          idx += 1;
+          if (idx >= list.length) {
+            return null;
+          }
+          walker.currentNode = list[idx];
+          return walker.currentNode;
+        },
+      };
+      return walker;
+    },
     getElementById: (id) => {
       const queue = [docEl];
       while (queue.length > 0) {
@@ -344,6 +525,7 @@ export function createMockAntigravityPage({ light = true } = {}) {
   const sandbox = vm.createContext({
     window: windowObj,
     document,
+    NodeFilter,
     MutationObserver: MockMutationObserver,
     requestAnimationFrame: windowObj.requestAnimationFrame,
     cancelAnimationFrame: windowObj.cancelAnimationFrame,

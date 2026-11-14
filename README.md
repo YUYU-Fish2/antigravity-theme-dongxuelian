@@ -11,9 +11,10 @@ Google Antigravity 桌面客户端当前仅开放技能（Skills）、规则（R
 - **零第三方运行依赖**：仅使用 `Node.js >= 22` 内置 `fetch`、`WebSocket` 与 `node:*` 标准库，无需 `npm install`。
 - **完整可逆**：运行 `remove` 或重启 Antigravity 即可立刻恢复原状。
 
-## 视觉特性
+## 视觉与本地化特性
 
-- **仅浅色模式生效**：全部颜色令牌与场景覆盖严格限定在 `html:has(> body.theme-light)` 与 `body.theme-light` 作用域内；将 Antigravity 切换至深色模式（`body.theme-dark`）时自动退出，不残留任何覆盖。
+- **仅浅色模式生效（视觉主题）**：全部颜色令牌与场景覆盖严格限定在 `html:has(> body.theme-light)` 与 `body.theme-light` 作用域内；将 Antigravity 切换至深色模式（`body.theme-dark`）时自动退出主题视觉，不残留任何覆盖。
+- **全界面简体中文汉化（默认开启）**：内置精校 UI 汉化词典（[`assets/i18n/zh-CN.json`](assets/i18n/zh-CN.json)）及动态日期/耗时/配额/辅助标签规则，浅/深色模式下均保持中文界面，并严格排除用户输入、Markdown AI 正文、代码块、`Monaco` 编辑器、终端及权限编辑器 `aria-label="Cancel"`；执行 `npm run remove` 或传入 `--no-i18n` 时完整无损还原原始英文与临时属性。支持创建 `user/i18n.override.json`（参考 [`user/i18n.override.example.json`](user/i18n.override.example.json)）或通过 `--i18n-override <路径>` 自定义词条并在 `watch` 模式下热重载。
 - **暖纸白与蓝墨色板**：以 `#F7F3EB` 纸底、`#FFFDF8` 卡片、`#EDECE9` 侧栏与 `#2C4268` / `#5C6578` 蓝墨正文为核心，配套 `#536B9E` / `#435882` 靛蓝交互高亮与 `#DDE4EF` / `#DDE8FA` 用户气泡及选中行。
 - **全页连续纸面**：使用 `paper.webp`（640px 平铺 + 35% 暖纸白柔光层）贯通侧栏、顶栏与对话画布，消除竖直纸板接缝，并修正对话列表顶/底部渐隐条底色。
 - **彩铅抱书场景舞台**：将 `reading.webp` 锚定在主对话舞台（`[data-dxl-stage="conversation"]::before`）负层级，配合 `@container dxl-reading` 容器查询在宽屏（`>=1100px`）、窗口（`900–1099px`）与窄栏（`<900px`）自动调整位置与交集渐隐遮罩，并在打开弹窗/下拉菜单时保持实色 `#FFFDF8` 卡片不透底，同时不硬编码字号、不使用 `backdrop-filter`。
@@ -78,31 +79,38 @@ npm run remove
 | `--port <端口>` | 手动指定本地 CDP 端口（1~65535），跳过 `DevToolsActivePort` 读取 |
 | `--no-avatar` | 禁用侧栏顶部 24px 冬雪莲头像徽标 |
 | `--no-shift` | 关闭 `>=1100px` 宽屏下对话/输入列的左移微调 |
+| `--no-i18n` | 关闭界面简体中文汉化（若已汉化则自动还原原始英文） |
+| `--i18n-override <路径>` | 加载额外的用户覆盖词典 JSON 文件（合并于 `user/i18n.override.json` 之后） |
 | `-h`, `--help` | 打印帮助信息 |
 
 示例：
 
 ```bash
 npm run inject -- --no-avatar --no-shift
-npm run watch -- --port 9222
+npm run inject -- --no-i18n
+npm run watch -- --port 9222 --i18n-override ./user/i18n.override.json
 ```
 
 ## 目录结构
 
 ```text
 antigravity-theme-dongxuelian/
-├─ assets/                    # 沿用自 dsh-theme-dongxuelian 的 WebP 资源与来源说明
+├─ assets/                    # 沿用自 dsh-theme-dongxuelian 的 WebP 资源与简体中文汉化词典
 │  ├─ characters/web/avatar.webp
+│  ├─ i18n/zh-CN.json         # 内置 UI 简体中文基础词典
 │  ├─ scenes/web/reading.webp
 │  └─ textures/web/paper.webp
+├─ user/                      # 用户覆盖词典示例（实际 user/i18n.override.json 已由 git 忽略）
+│  └─ i18n.override.example.json
 ├─ bin/                       # CLI 入口（inject.js / watch.js / remove.js）
 ├─ src/
 │  ├─ assets.js               # 资源预算校验、Base64 Data URI 编码与 CSS 组装
 │  ├─ cdp.js                  # 零依赖 CDP 会话客户端与幂等页面注入/卸载脚本
+│  ├─ i18n.js                 # UI 汉化词典合并、TreeWalker 实时汉化与可逆还原引擎
 │  ├─ runner.js               # injectOnce / startWatch / watchLoop / removeOnce
 │  └─ theme.css               # Antigravity 浅色令牌、连续纸面与响应式抱书舞台样式
-├─ scripts/check.mjs          # JS 语法、WebP 资源预算与 CSS 完整性静态校验
-├─ test/                      # 资产、CSS 与本地 Mock CDP WebSocket 自动化测试
+├─ scripts/check.mjs          # JS 语法、WebP 资产预算、汉化词典与 CSS 完整性静态校验
+├─ test/                      # 资产、汉化、CSS 与本地 Mock CDP WebSocket 自动化测试
 ├─ inject.bat / watch.bat / remove.bat
 ├─ LICENSE
 └─ THIRD_PARTY_NOTICES.md

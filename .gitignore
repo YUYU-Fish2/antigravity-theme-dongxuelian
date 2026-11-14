@@ -3,3 +3,4 @@ node_modules/
 watch.log
 .research/
 *.tgz
+user/i18n.override.json

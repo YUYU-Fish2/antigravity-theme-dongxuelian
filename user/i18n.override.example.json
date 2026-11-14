@@ -1,0 +1,4 @@
+{
+  "_comment": "将本文件复制为 user/i18n.override.json 后即可自定义界面汉化词条（键名以 _ 开头的字段会被自动忽略），也可通过 --i18n-override <路径> 指定外部词典。",
+  "exact": {}
+}

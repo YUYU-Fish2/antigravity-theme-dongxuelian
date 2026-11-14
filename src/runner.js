@@ -3,6 +3,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildThemeCss, loadThemeAssets } from './assets.js';
 import {
+  DEFAULT_I18N_RELATIVE_PATH,
+  DEFAULT_OVERRIDE_RELATIVE_PATH,
+  loadI18nDictionary,
+} from './i18n.js';
+import {
   CdpSession,
   REMOVE_EXPRESSION,
   buildInjectScript,
@@ -35,14 +40,24 @@ export function readPackageVersion(rootDir = DEFAULT_ROOT) {
 /**
  * 解析命令行参数。
  * @param {string[]} [argv]
- * @returns {{ port: number|undefined, avatar: boolean, shift: boolean, help: boolean }}
+ * @returns {{ port: number|undefined, avatar: boolean, shift: boolean, i18n: boolean, i18nOverride: string|undefined, help: boolean }}
  */
 export function parseCliArgs(argv = process.argv.slice(2)) {
   const options = {
     port: undefined,
     avatar: true,
     shift: true,
+    i18n: true,
+    i18nOverride: undefined,
     help: false,
+  };
+
+  const validateOverridePath = (value) => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) {
+      throw new Error('--i18n-override 需要传入有效的覆盖词典文件路径');
+    }
+    return trimmed;
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -57,6 +72,23 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     }
     if (arg === '--no-shift') {
       options.shift = false;
+      continue;
+    }
+    if (arg === '--no-i18n') {
+      options.i18n = false;
+      continue;
+    }
+    if (arg === '--i18n-override') {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('-')) {
+        throw new Error('--i18n-override 需要传入覆盖词典文件路径');
+      }
+      options.i18nOverride = validateOverridePath(next);
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--i18n-override=')) {
+      options.i18nOverride = validateOverridePath(arg.slice('--i18n-override='.length));
       continue;
     }
     if (arg === '--port') {
@@ -92,10 +124,12 @@ export function formatUsage(commandName = 'inject') {
     `  node bin/${commandName}.js [选项]`,
     '',
     '选项：',
-    '  --port <端口>   手动指定 Antigravity CDP 端口（默认读取 DevToolsActivePort）',
-    '  --no-avatar     不注入侧边栏 24px 冬雪莲头像徽标',
-    '  --no-shift      关闭对话流居中阅读偏移微调',
-    '  -h, --help      显示此帮助信息',
+    '  --port <端口>             手动指定 Antigravity CDP 端口（默认读取 DevToolsActivePort）',
+    '  --no-avatar               不注入侧边栏 24px 冬雪莲头像徽标',
+    '  --no-shift                关闭对话流居中阅读偏移微调',
+    '  --no-i18n                 关闭界面简体中文汉化（若已汉化则自动还原英文）',
+    '  --i18n-override <路径>    指定额外的用户覆盖词典 JSON 文件',
+    '  -h, --help                显示此帮助信息',
   ].join('\n');
 }
 
@@ -105,20 +139,27 @@ export function formatUsage(commandName = 'inject') {
  * @param {string} [options.rootDir]
  * @param {boolean} [options.avatar]
  * @param {boolean} [options.shift]
+ * @param {boolean} [options.i18n]
+ * @param {string} [options.i18nOverride]
  * @returns {{ css: string, script: string, version: string }}
  */
 export function prepareRuntimePayload({
   rootDir = DEFAULT_ROOT,
   avatar = true,
   shift = true,
+  i18n = true,
+  i18nOverride,
 } = {}) {
   const assets = loadThemeAssets(rootDir);
   const css = buildThemeCss({ rootDir });
   const version = readPackageVersion(rootDir);
+  const i18nDict = i18n ? loadI18nDictionary({ rootDir, overridePath: i18nOverride }).dict : null;
   const script = buildInjectScript(css, {
     avatarDataUri: avatar ? assets.avatar.dataUri : '',
     avatar,
     shift,
+    i18n,
+    i18nDict,
     version,
   });
   return { css, script, version };
@@ -158,6 +199,8 @@ export async function injectOnce(options = {}) {
     portFile = getPortFilePath(),
     avatar = true,
     shift = true,
+    i18n = true,
+    i18nOverride,
     fetchImpl = fetch,
     WebSocketImpl = globalThis.WebSocket,
     timeoutMs = 5000,
@@ -171,7 +214,7 @@ export async function injectOnce(options = {}) {
     return { port: targetPort, injectedCount: 0, results: [] };
   }
 
-  const { script, version } = prepareRuntimePayload({ rootDir, avatar, shift });
+  const { script, version } = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
   const results = [];
 
   for (const page of pages) {
@@ -309,6 +352,8 @@ export async function startWatch(options = {}) {
     pidFile = join(rootDir, '.watch.pid'),
     avatar = true,
     shift = true,
+    i18n = true,
+    i18nOverride,
     pollIntervalMs = 2000,
     cssDebounceMs = 150,
     fetchImpl = fetch,
@@ -317,13 +362,13 @@ export async function startWatch(options = {}) {
     logger = console,
   } = options;
 
-  let currentPayload = prepareRuntimePayload({ rootDir, avatar, shift });
+  let currentPayload = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
   const attached = new Map();
   let stopped = false;
   let syncing = false;
   let cssTimer = null;
   let pollTimer = null;
-  let fsWatcher = null;
+  const fsWatchers = [];
   let waitErrorLogged = false;
 
   try {
@@ -379,9 +424,9 @@ export async function startWatch(options = {}) {
       return 0;
     }
     try {
-      currentPayload = prepareRuntimePayload({ rootDir, avatar, shift });
+      currentPayload = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
     } catch (err) {
-      logger.warn(`[冬雪莲] CSS 重新编译失败：${err.message}`);
+      logger.warn(`[冬雪莲] 运行时载荷重新编译失败：${err.message}`);
       return 0;
     }
 
@@ -405,22 +450,34 @@ export async function startWatch(options = {}) {
         await entry.session.close().catch(() => {});
       }
     }
-    logger.log(`[冬雪莲] 检测到样式变更，已热重载 ${updated} 个页面。`);
+    logger.log(`[冬雪莲] 检测到配置或样式变更，已热重载 ${updated} 个页面。`);
     return updated;
   };
 
-  const cssPath = join(rootDir, 'src', 'theme.css');
-  if (existsSync(cssPath)) {
+  const watchCandidates = [join(rootDir, 'src', 'theme.css')];
+  if (i18n) {
+    watchCandidates.push(
+      join(rootDir, DEFAULT_I18N_RELATIVE_PATH),
+      join(rootDir, DEFAULT_OVERRIDE_RELATIVE_PATH),
+    );
+    if (typeof i18nOverride === 'string' && i18nOverride.trim()) {
+      watchCandidates.push(resolve(process.cwd(), i18nOverride.trim()));
+    }
+  }
+  const uniqueWatchPaths = Array.from(new Set(watchCandidates.map((p) => resolve(p))));
+  for (const targetPath of uniqueWatchPaths) {
+    if (!existsSync(targetPath)) continue;
     try {
-      fsWatcher = watch(cssPath, () => {
+      const watcher = watch(targetPath, () => {
         if (stopped) return;
         clearTimeout(cssTimer);
         cssTimer = setTimeout(() => {
           void reinjectNow();
         }, cssDebounceMs);
       });
+      fsWatchers.push(watcher);
     } catch (err) {
-      logger.warn(`[冬雪莲] 启动 CSS 文件监听失败（${cssPath}）：${err.message}`);
+      logger.warn(`[冬雪莲] 启动文件监听失败（${targetPath}）：${err.message}`);
     }
   }
 
@@ -434,13 +491,14 @@ export async function startWatch(options = {}) {
     stopped = true;
     clearTimeout(cssTimer);
     clearInterval(pollTimer);
-    if (fsWatcher) {
+    for (const watcher of fsWatchers) {
       try {
-        fsWatcher.close();
+        watcher.close();
       } catch {
         // 忽略关闭监听异常
       }
     }
+    fsWatchers.length = 0;
     for (const entry of attached.values()) {
       await entry.session.close().catch(() => {});
     }
@@ -471,7 +529,7 @@ export async function startWatch(options = {}) {
 export async function watchLoop(options = {}) {
   const logger = options.logger ?? console;
   const controller = await startWatch(options);
-  logger.log('[冬雪莲] 监听模式已启动（自动追踪新窗口并热重载 src/theme.css），按 Ctrl+C 退出。');
+  logger.log('[冬雪莲] 监听模式已启动（自动追踪新窗口并热重载样式与汉化配置），按 Ctrl+C 退出。');
 
   await new Promise((resolveLoop) => {
     let finishing = false;

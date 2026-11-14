@@ -63,12 +63,16 @@ test('readPort 与 parseCliArgs 校验端口、开关与异常参数', () => {
     port: 9222,
     avatar: false,
     shift: false,
+    i18n: true,
+    i18nOverride: undefined,
     help: false,
   });
   assert.deepEqual(parseCliArgs(['--port=9444', '-h']), {
     port: 9444,
     avatar: true,
     shift: true,
+    i18n: true,
+    i18nOverride: undefined,
     help: true,
   });
   assert.throws(() => parseCliArgs(['--unknown-flag']), /未知参数/);

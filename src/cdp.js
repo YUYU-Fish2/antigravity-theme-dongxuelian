@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createI18nController, restoreI18nDom } from './i18n.js';
 
 /**
  * 根据操作系统与环境变量推导 Antigravity 的 `DevToolsActivePort` 路径。
@@ -351,27 +352,35 @@ export class CdpSession {
  * @param {string} [options.avatarDataUri]
  * @param {boolean} [options.avatar]
  * @param {boolean} [options.shift]
+ * @param {boolean} [options.i18n]
+ * @param {Record<string, string>|null} [options.i18nDict]
  * @param {string} [options.version]
  * @returns {string}
  */
 export function buildInjectScript(
   css,
-  { avatarDataUri = '', avatar = true, shift = true, version = '0.1.0' } = {},
+  { avatarDataUri = '', avatar = true, shift = true, i18n = true, i18nDict = null, version = '0.1.0' } = {},
 ) {
   if (typeof css !== 'string' || !css.trim()) {
     throw new Error('CSS 内容不能为空');
   }
+  const enableI18n = Boolean(i18n);
   const config = {
     styleId: 'dxl-antigravity-theme',
     cssText: css,
     avatarUri: avatar && avatarDataUri ? avatarDataUri : '',
     enableAvatar: Boolean(avatar && avatarDataUri),
     enableShift: Boolean(shift),
+    enableI18n,
+    i18nDict: enableI18n && i18nDict && typeof i18nDict === 'object' ? i18nDict : {},
     version: String(version || '0.1.0'),
   };
 
   return `(() => {
   const CFG = ${JSON.stringify(config)};
+  const restoreI18nDom = ${restoreI18nDom.toString()};
+  const createI18nController = ${createI18nController.toString()};
+
   if (typeof window.__dxlCleanup === 'function') {
     try {
       window.__dxlCleanup();
@@ -381,6 +390,7 @@ export function buildInjectScript(
   }
 
   let observer = null;
+  let i18nCtrl = CFG.enableI18n ? createI18nController(CFG.i18nDict, CFG.version, restoreI18nDom) : null;
   let rafId = 0;
   let rafPending = false;
   let mutating = false;
@@ -598,6 +608,14 @@ export function buildInjectScript(
     headerHost.prepend(badge);
   };
 
+  const syncI18n = () => {
+    if (i18nCtrl) {
+      i18nCtrl.ensureStarted();
+    } else if (document.body) {
+      restoreI18nDom(document.body);
+    }
+  };
+
   const applyAll = () => {
     if (mutating) return;
     mutating = true;
@@ -606,6 +624,7 @@ export function buildInjectScript(
       syncHtmlAttributes();
       syncConversationMarkers();
       syncSidebarAvatar();
+      syncI18n();
     } finally {
       mutating = false;
     }
@@ -676,6 +695,12 @@ export function buildInjectScript(
     for (const el of document.querySelectorAll('[data-dxl-avatar]')) {
       el.remove();
     }
+    if (i18nCtrl) {
+      i18nCtrl.stop({ restore: true });
+      i18nCtrl = null;
+    } else if (document.body) {
+      restoreI18nDom(document.body);
+    }
     if (window.__dxlCleanup === cleanup) {
       delete window.__dxlCleanup;
     }
@@ -705,19 +730,24 @@ export function buildInjectScript(
     lightMode: isLightTheme(),
     hasStage: Boolean(document.querySelector('[data-dxl-stage="conversation"]')),
     hasAvatar: Boolean(document.querySelector('[data-dxl-avatar="true"]')),
+    hasI18n: CFG.enableI18n,
     conflicts,
   };
 })();`;
 }
 
 /**
- * 卸载脚本表达式：清理样式节点、观察器、舞台属性与侧边栏头像。
+ * 卸载脚本表达式：清理样式节点、观察器、舞台属性、侧边栏头像与界面汉化痕迹。
  */
 export const REMOVE_EXPRESSION = `(() => {
+  const restoreI18nDom = ${restoreI18nDom.toString()};
   const removedStyle = document.getElementById('dxl-antigravity-theme') ? 1 : 0;
   const removedStage = document.querySelectorAll('[data-dxl-stage]').length;
   const removedTrack = document.querySelectorAll('[data-dxl-reading-track]').length;
   const removedAvatar = document.querySelectorAll('[data-dxl-avatar]').length;
+  const removedI18nAttrs = document.querySelectorAll(
+    '[data-dxl-orig-title], [data-dxl-orig-placeholder], [data-dxl-orig-aria-label]',
+  ).length;
 
   if (typeof window.__dxlCleanup === 'function') {
     try {
@@ -744,6 +774,9 @@ export const REMOVE_EXPRESSION = `(() => {
   for (const el of document.querySelectorAll('[data-dxl-avatar]')) {
     el.remove();
   }
+  if (document.body) {
+    restoreI18nDom(document.body);
+  }
   delete window.__dxlCleanup;
   return {
     removed: true,
@@ -751,5 +784,6 @@ export const REMOVE_EXPRESSION = `(() => {
     removedStage,
     removedTrack,
     removedAvatar,
+    removedI18nAttrs,
   };
 })();`;

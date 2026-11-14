@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildThemeCss, loadThemeAssets } from '../src/assets.js';
+import { loadI18nDictionary } from '../src/i18n.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -159,12 +160,14 @@ function main() {
   const assets = loadThemeAssets(ROOT);
   const totalBytes = assets.avatar.size + assets.reading.size + assets.paper.size;
 
+  const i18n = loadI18nDictionary({ rootDir: ROOT });
+
   const css = buildThemeCss({ rootDir: ROOT });
   assertCssIntegrity(css);
   assertBatchWrappers();
 
   console.log(
-    `PASS: JS 语法(${jsFiles.length} 文件)、WebP 资产(${totalBytes} B)、CSS 作用域与 .bat 检查通过 (${relative(ROOT, ROOT) || '.'})`,
+    `PASS: JS 语法(${jsFiles.length} 文件)、WebP 资产(${totalBytes} B)、汉化词典(${i18n.baseCount} 词条)、CSS 作用域与 .bat 检查通过 (${relative(ROOT, ROOT) || '.'})`,
   );
 }
 
