@@ -584,6 +584,47 @@ async function startBackgroundDaemon({
   throw new Error(`等待后台监听守护就绪超时${tail ? `：\n${tail}` : ''}`);
 }
 
+/**
+ * 在 Windows 任务计划程序可用时优先通过 Scheduled Task 独立拉起守护进程，
+ * 使其脱离当前终端或宿主服务的 Job Object（防止集成终端/宿主服务重启时连带杀掉守护）。
+ */
+async function tryStartViaScheduledTask({
+  pidFile,
+  logFile,
+  isAliveImpl = isProcessAlive,
+  execFileImpl = execFileAsync,
+  startupTimeoutMs = 3000,
+}) {
+  rotateLogIfNeeded(logFile);
+  try {
+    await runPowerShell(`Start-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}'`, { execFileImpl });
+  } catch {
+    return null;
+  }
+
+  const deadline = Date.now() + Math.max(1500, startupTimeoutMs);
+  while (Date.now() < deadline) {
+    let pidNum = null;
+    if (isAliveImpl === isProcessAlive) {
+      pidNum = readLiveWatcherPid(pidFile);
+    } else if (existsSync(pidFile)) {
+      try {
+        const candidate = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+        if (Number.isInteger(candidate) && candidate > 0 && isAliveImpl(candidate)) {
+          pidNum = candidate;
+        }
+      } catch {
+        // 等待 PID 文件写入完整
+      }
+    }
+    if (pidNum) {
+      return { pid: pidNum, launchedVia: 'windows-task-scheduler' };
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return null;
+}
+
 async function probeCdpPages({ port, portFile, fetchImpl = fetch, timeoutMs = 1500 }) {
   try {
     const targetPort = readPort(portFile, { port });
@@ -638,17 +679,29 @@ export async function installTheme(options = {}) {
   });
 
   const daemonArgs = buildWatchDaemonArgs(normalizedOptions, { includeIfNotRunning: false });
-  const daemon = await startBackgroundDaemon({
-    rootDir,
-    watchBin: paths.watchBin,
-    daemonArgs,
-    pidFile: paths.pidFile,
-    logFile: paths.logFile,
-    nodePath,
-    spawnImpl,
-    isAliveImpl,
-    startupTimeoutMs: options.startupTimeoutMs ?? 3000,
-  });
+  let daemon = null;
+  if (platform === 'win32' && autostart.method === 'windows-task-scheduler' && !options.spawnImpl) {
+    daemon = await tryStartViaScheduledTask({
+      pidFile: paths.pidFile,
+      logFile: paths.logFile,
+      isAliveImpl,
+      execFileImpl,
+      startupTimeoutMs: options.startupTimeoutMs ?? 3000,
+    });
+  }
+  if (!daemon) {
+    daemon = await startBackgroundDaemon({
+      rootDir,
+      watchBin: paths.watchBin,
+      daemonArgs,
+      pidFile: paths.pidFile,
+      logFile: paths.logFile,
+      nodePath,
+      spawnImpl,
+      isAliveImpl,
+      startupTimeoutMs: options.startupTimeoutMs ?? 3000,
+    });
+  }
 
   // 留给后台守护完成首轮 /json/list 与页面注入的缓冲时间
   const settleDelayMs = options.settleDelayMs ?? 350;

@@ -214,10 +214,11 @@ function createIsolatedRepoCopy(prefix = 'dxl-service-') {
 }
 
 /** 构造隔离 Windows execFileImpl 模拟器，精准解析 PowerShell EncodedCommand */
-function createWindowsExecMock({ failTaskRegister = false } = {}) {
+function createWindowsExecMock({ failTaskRegister = false, onStartTask = null } = {}) {
   const invocations = [];
   const state = {
     taskRegistered: false,
+    taskStarted: false,
     regValue: null,
   };
 
@@ -238,6 +239,14 @@ function createWindowsExecMock({ failTaskRegister = false } = {}) {
         }
         state.taskRegistered = true;
         return { stdout: '', stderr: '' };
+      }
+      if (script.includes('Start-ScheduledTask')) {
+        if (typeof onStartTask === 'function' && state.taskRegistered) {
+          state.taskStarted = true;
+          onStartTask();
+          return { stdout: '', stderr: '' };
+        }
+        throw new Error('Task start skipped (mock)');
       }
       if (script.includes('Unregister-ScheduledTask')) {
         if (!state.taskRegistered) {
@@ -765,5 +774,39 @@ test('macOS (LaunchAgent plist) 与 Linux (XDG .desktop) 开机自启安装、�
     rmSync(macRoot, { recursive: true, force: true });
     rmSync(linuxHome, { recursive: true, force: true });
     rmSync(linuxRoot, { recursive: true, force: true });
+  }
+});
+
+test('Windows 任务计划程序可用时优先通过 Start-ScheduledTask 独立拉起守护进程脱离终端进程树', async () => {
+  const tempRoot = createIsolatedRepoCopy('dxl-win-taskrun-');
+  const expectedPid = 787878;
+  const mockExec = createWindowsExecMock({
+    onStartTask: () => {
+      writeFileSync(join(tempRoot, '.watch.pid'), `${expectedPid}\n`, 'utf8');
+    },
+  });
+  const quietLogger = { log: () => {}, warn: () => {}, error: () => {} };
+
+  try {
+    const installRes = await installTheme({
+      rootDir: tempRoot,
+      platform: 'win32',
+      env: { ...process.env, USERDOMAIN: 'TESTPC', USERNAME: 'Tester' },
+      home: tempRoot,
+      execFileImpl: mockExec.execFileImpl,
+      isAliveImpl: (pid) => pid === expectedPid,
+      fetchImpl: async () => {
+        throw new Error('no cdp');
+      },
+      logger: quietLogger,
+      settleDelayMs: 10,
+      startupTimeoutMs: 500,
+    });
+
+    assert.equal(installRes.installed, true);
+    assert.equal(mockExec.state.taskStarted, true);
+    assert.equal(installRes.pid, expectedPid);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
   }
 });
