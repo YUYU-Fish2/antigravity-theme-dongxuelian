@@ -656,12 +656,18 @@ export function buildInjectScript(
     document.addEventListener('DOMContentLoaded', onDomReady, { once: true });
   }
 
+  const conflicts = [];
+  if (document.getElementById('ag-custom-fonts')) {
+    conflicts.push('chuanban-antigravity-theme-patch');
+  }
+
   return {
     injected: true,
     version: CFG.version,
     lightMode: isLightTheme(),
     hasStage: Boolean(document.querySelector('[data-dxl-stage="conversation"]')),
     hasAvatar: Boolean(document.querySelector('[data-dxl-avatar="true"]')),
+    conflicts,
   };
 })();`;
 }

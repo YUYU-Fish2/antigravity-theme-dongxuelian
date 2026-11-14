@@ -124,9 +124,19 @@ export function prepareRuntimePayload({
   return { css, script, version };
 }
 
-async function injectPageSession(session, script) {
+function warnIfConflicts(evalResult, pageLabel, logger) {
+  const conflicts = evalResult?.conflicts;
+  if (Array.isArray(conflicts) && conflicts.length > 0) {
+    logger?.warn?.(
+      `[冬雪莲] 警告：页面「${pageLabel}」检测到同时启用其他 CDP 主题（${conflicts.join(', ')}），可能产生样式互相覆盖；请先停用或卸载冲突主题后再注入。`,
+    );
+  }
+}
+
+async function injectPageSession(session, script, { pageLabel = '', logger } = {}) {
   await session.send('Page.enable');
   const evalResult = await session.evaluate(script);
+  warnIfConflicts(evalResult, pageLabel, logger);
   const registered = await session.send('Page.addScriptToEvaluateOnNewDocument', {
     source: script,
   });
@@ -168,7 +178,10 @@ export async function injectOnce(options = {}) {
     const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
     try {
       await session.connect();
-      const { evalResult, scriptId } = await injectPageSession(session, script);
+      const { evalResult, scriptId } = await injectPageSession(session, script, {
+        pageLabel: page.title || page.id,
+        logger,
+      });
       results.push({
         id: page.id,
         title: page.title || '',
@@ -336,7 +349,10 @@ export async function startWatch(options = {}) {
         const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
         try {
           await session.connect();
-          const { scriptId } = await injectPageSession(session, currentPayload.script);
+          const { scriptId } = await injectPageSession(session, currentPayload.script, {
+            pageLabel: page.title || page.id,
+            logger,
+          });
           session.on('close', () => {
             attached.delete(page.id);
           });

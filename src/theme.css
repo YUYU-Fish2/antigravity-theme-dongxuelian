@@ -153,10 +153,11 @@ body.theme-light {
 /* ==========================================================================
    2. 全页连续纸面（640px 纤维平铺 + 35% 暖纸白遮罩）
    ========================================================================== */
-body.theme-light,
-body.theme-light #root,
-body.theme-light .bg-sidebar,
-body.theme-light [role="navigation"][aria-label="Sidebar"] {
+/* 放行内置浏览器 WebContentsView 透明打孔，避免连续纸面遮挡网页视口 */
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) #root,
+body.theme-light .bg-sidebar:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not(.browser-hole-ancestor),
+body.theme-light [role="navigation"][aria-label="Sidebar"]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) {
   background-color: #F7F3EB !important;
   background-image:
     linear-gradient(rgb(250 245 235 / 0.35), rgb(250 245 235 / 0.35)),

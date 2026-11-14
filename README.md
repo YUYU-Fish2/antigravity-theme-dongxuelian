@@ -58,6 +58,17 @@ npm run remove
 
 若监听进程正在运行则先通过 `.watch.pid` 发送停止信号，随后连接已打开页面清理 `<style id="dxl-antigravity-theme">`、`data-dxl-*` 属性、观察器及侧栏头像；若 Antigravity 未运行则会安全提示并正常退出。
 
+## 与其他 CDP 主题补丁的互斥说明
+
+- 不与官方 Skills / MCP / Sidecar 插件（如 `antigravity-pulse`、`desktop-context`、`ppt-master`）以及原生 DSH 主题包冲突。
+- 若你此前安装过同走 CDP CSS 注入路线的主题补丁（如 `~/.gemini/antigravity/theme-patch` 下的 `chuanban-antigravity-theme-patch`），**不要同时开启**；否则对方守护进程会把 `#ag-custom-fonts` 移至 `<head>` 末尾并混色。注入时工具会自动检测 `#ag-custom-fonts` 并在终端发出警告。
+- **切换为纯净冬雪莲（二选一）**：
+  - 彻底停止自启服务并还原窗口（保留你的 `user/` 配置目录，后续可随时用 `install` 恢复）：
+    ```powershell
+    node "$env:USERPROFILE\.gemini\antigravity\theme-patch\install.mjs" uninstall
+    ```
+  - 或临时静默暂停（不删开机计划任务）：将 `~/.gemini/antigravity/theme-patch/user/config.json` 中的 `"enabled": true` 改为 `false`（2.5 秒热生效），然后在本目录运行 `npm run inject` 或 `npm run watch`。
+
 ## 命令行选项
 
 所有入口均支持以下参数（通过 `npm run` 传参时请加上 `--`）：

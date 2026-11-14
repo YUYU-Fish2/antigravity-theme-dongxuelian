@@ -229,6 +229,30 @@ test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、rem
     });
     assert.equal(offlineRes.running, false);
     assert.equal(offlineRes.removedCount, 0);
+
+    // 5. 若页面存在 #ag-custom-fonts (theme-patch)，injectOnce 应识别并打印警告
+    server.addPage({ id: 'conflict-win', title: 'Conflict Window' });
+    const conflictPage = createMockAntigravityPage({ light: true });
+    const fakeAgStyle = conflictPage.document.createElement('style');
+    fakeAgStyle.id = 'ag-custom-fonts';
+    conflictPage.elements.head.appendChild(fakeAgStyle);
+    domMap.set('conflict-win', conflictPage);
+
+    const warnings = [];
+    const conflictRes = await injectOnce({
+      portFile,
+      logger: {
+        log: () => {},
+        warn: (msg) => warnings.push(msg),
+        error: () => {},
+      },
+    });
+    assert.equal(conflictRes.injectedCount, 3);
+    assert.equal(
+      warnings.some((w) => w.includes('chuanban-antigravity-theme-patch')),
+      true,
+      '检测到 #ag-custom-fonts 时应打印冲突警告',
+    );
   } finally {
     await server.close();
     rmSync(dir, { recursive: true, force: true });
