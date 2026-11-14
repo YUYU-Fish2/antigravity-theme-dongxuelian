@@ -40,6 +40,11 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
   assert.ok(css.includes('mask-composite: intersect'), '缺少边缘交集渐隐遮罩');
   assert.ok(css.includes('html:not([data-dxl-shift="off"])'), '缺少 --no-shift 禁用开关');
   assert.ok(css.includes('[class*="after:from-background"]::after'), '缺少顶部分组 sticky 渐隐覆盖');
+  assert.ok(
+    css.includes('[data-dxl-stage="conversation"] .bottom-0.pointer-events-none') &&
+      css.includes('[data-testid="autoscroll-viewport"]'),
+    '缺少底部实色渐隐条清空及滚动视口 mask-image 柔边规则',
+  );
   assert.ok(css.includes('[role="menu"]'), '缺少实色纸白弹窗/菜单规则');
   assert.ok(css.includes('body.theme-light [data-dxl-avatar]'), '缺少侧栏头像浅色展示规则');
   assert.ok(

@@ -402,13 +402,20 @@ body.theme-light [class~="hover:bg-sidebar-accent"]:hover {
   background-color: var(--dxl-hover) !important;
 }
 
-/* 对话流顶部分组 sticky 渐隐与底部渐隐条：改用暖纸白，消除异色灰条 */
+/* 对话流顶部分组 sticky 渐隐：改用暖纸白，消除异色灰条 */
 body.theme-light [class*="after:from-background"]::after {
   background-image: linear-gradient(rgb(247 243 235 / 0.88), transparent) !important;
 }
 
+/* 对话流底部原生实色渐隐遮罩条：清透明避免横切右侧立绘裙摆，改由滚动视口自身 mask-image 上下柔边 */
+body.theme-light [data-dxl-stage="conversation"] .bottom-0.pointer-events-none,
 body.theme-light [class~="bottom-0"][class~="inset-x-4"][class~="pointer-events-none"] {
-  background-image: linear-gradient(to top, rgb(247 243 235 / 0.90), transparent) !important;
+  background: transparent !important;
+  background-image: none !important;
+}
+
+body.theme-light [data-dxl-stage="conversation"] [data-testid="autoscroll-viewport"] {
+  mask-image: linear-gradient(180deg, transparent, #000 28px, #000 calc(100% - 28px), transparent) !important;
 }
 
 /* Markdown 代码块、行内代码、引用块 */
