@@ -106,7 +106,7 @@ export class MockElement {
     const results = [];
     const visit = (node) => {
       for (const child of node.children) {
-        if (parts.some((sel) => matchesComplexSelector(child, sel)) && !seen.has(child)) {
+        if (parts.some((sel) => matchesComplexSelector(child, sel, this)) && !seen.has(child)) {
           seen.add(child);
           results.push(child);
         }
@@ -141,8 +141,9 @@ function splitSelectorList(selector) {
     .filter(Boolean);
 }
 
-function matchesSimpleSelector(el, token) {
+function matchesSimpleSelector(el, token, scopeEl = null) {
   const normalized = token.replace(/\\\\\./g, '\\.');
+  if (normalized === ':scope') return el === scopeEl;
   if (normalized === '.bg-sidebar') return el.classList.contains('bg-sidebar');
   if (normalized === '.outline-none') return el.classList.contains('outline-none');
   if (normalized === '.outline-none[style*="container-type"]') {
@@ -165,25 +166,76 @@ function matchesSimpleSelector(el, token) {
   if (attrPresent) {
     return el.hasAttribute(attrPresent[1]);
   }
-  if (normalized.startsWith('.')) {
-    return el.classList.contains(normalized.slice(1));
+  if (/^\.[A-Za-z0-9_.-]+$/.test(normalized)) {
+    return normalized
+      .slice(1)
+      .split('.')
+      .every((cls) => el.classList.contains(cls));
   }
   return el.tagName === normalized.toUpperCase();
 }
 
-function matchesComplexSelector(el, selector) {
-  const parts = selector.split(/\s*>\s*/);
-  if (parts.length === 1) {
-    return matchesSimpleSelector(el, parts[0]);
+function tokenizeSelector(selector) {
+  const tokens = [];
+  let current = '';
+  let bracketDepth = 0;
+  let quote = '';
+  for (const ch of selector.trim()) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = '';
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+    } else if (ch === '[') {
+      bracketDepth += 1;
+      current += ch;
+    } else if (ch === ']') {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      current += ch;
+    } else if (bracketDepth === 0 && (ch === '>' || /\s/.test(ch))) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      if (ch === '>') {
+        if (tokens[tokens.length - 1] === ' ') tokens.pop();
+        if (tokens[tokens.length - 1] !== '>') tokens.push('>');
+      } else if (
+        tokens.length > 0 &&
+        tokens[tokens.length - 1] !== '>' &&
+        tokens[tokens.length - 1] !== ' '
+      ) {
+        tokens.push(' ');
+      }
+    } else {
+      current += ch;
+    }
   }
-  if (parts.length === 2) {
-    return (
-      matchesSimpleSelector(el, parts[1]) &&
-      Boolean(el.parentElement) &&
-      matchesSimpleSelector(el.parentElement, parts[0])
-    );
+  if (current) tokens.push(current);
+  while (tokens[tokens.length - 1] === ' ') tokens.pop();
+  return tokens;
+}
+
+function matchTokensFromRight(el, tokens, idx, scopeEl) {
+  if (!matchesSimpleSelector(el, tokens[idx], scopeEl)) return false;
+  if (idx === 0) return true;
+  const comb = tokens[idx - 1];
+  if (comb === '>') {
+    return Boolean(el.parentElement) && matchTokensFromRight(el.parentElement, tokens, idx - 2, scopeEl);
+  }
+  let anc = el.parentElement;
+  while (anc) {
+    if (matchTokensFromRight(anc, tokens, idx - 2, scopeEl)) return true;
+    anc = anc.parentElement;
   }
   return false;
+}
+
+function matchesComplexSelector(el, selector, scopeEl = null) {
+  const tokens = tokenizeSelector(selector);
+  if (tokens.length === 0) return false;
+  return matchTokensFromRight(el, tokens, tokens.length - 1, scopeEl);
 }
 
 /**

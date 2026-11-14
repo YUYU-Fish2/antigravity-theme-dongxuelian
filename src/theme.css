@@ -36,6 +36,8 @@ body.theme-light {
   /* ---- Tailwind / shadcn 语义令牌 ---- */
   --background: #F7F3EB !important;
   --content: #F7F3EB !important;
+  --shell: #F7F3EB !important;
+  --color-shell: #F7F3EB !important;
   --foreground: #2C4268 !important;
 
   --card: #FFFDF8 !important;
@@ -73,6 +75,14 @@ body.theme-light {
 
   --focus-ring-color: rgba(83, 107, 158, 0.32) !important;
   --focus-ring-offset-color: #F7F3EB !important;
+  --glass: #FFFDF8 !important;
+  --glass-border: #D4D7DE !important;
+  --glass-highlight: transparent !important;
+  --onyx-frame: #E8E6E1 !important;
+  --onyx-well: #EDECE9 !important;
+  --onyx-raised: #FFFDF8 !important;
+  --onyx-selected: #DDE8FA !important;
+  --onyx-key: #FFFDF8 !important;
   --bg-selection: rgba(83, 107, 158, 0.18) !important;
   --bg-selection-overlay: rgba(83, 107, 158, 0.14) !important;
   --bg-cursor-line: rgba(44, 66, 104, 0.04) !important;
@@ -153,11 +163,9 @@ body.theme-light {
 /* ==========================================================================
    2. 全页连续纸面（640px 纤维平铺 + 35% 暖纸白遮罩）
    ========================================================================== */
-/* 放行内置浏览器 WebContentsView 透明打孔，避免连续纸面遮挡网页视口 */
+/* 放行内置浏览器 WebContentsView 透明打孔，仅在根节点铺设单张连续纸面 */
 body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
-body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) #root,
-body.theme-light .bg-sidebar:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]):not(.browser-hole-ancestor),
-body.theme-light [role="navigation"][aria-label="Sidebar"]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) {
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) #root {
   background-color: #F7F3EB !important;
   background-image:
     linear-gradient(rgb(250 245 235 / 0.35), rgb(250 245 235 / 0.35)),
@@ -166,14 +174,32 @@ body.theme-light [role="navigation"][aria-label="Sidebar"]:not([data-has-browser
   background-size: auto, 640px 640px !important;
 }
 
-/* 保持会话滚动列与标题栏透明，透出整页纸面，消除竖直纸板切割 */
+/* 穿透 Antigravity 外壳与分栏实色层，让整张 640px 连续纸面贯通侧栏、顶栏与主画布 */
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .agy-shell,
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .agy-inset-shell,
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .agy-sheet,
+body.theme-light [data-split-fill-edge],
+body.theme-light [data-main-content-header],
+body.theme-light [data-main-content-body]:not(:has([data-browser-hole="true"])),
+body.theme-light [data-side-panel-body]:not(:has([data-browser-hole="true"])),
+body.theme-light [data-testid="sidebar-split"] .bg-sidebar.flex-col,
+body.theme-light [role="navigation"][aria-label="Sidebar"]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
+body.theme-light .bg-sidebar.w-full,
 body.theme-light #root > div,
 body.theme-light main,
+body.theme-light .agy-home,
+body.theme-light [data-testid="conversation-view"],
 body.theme-light [data-dxl-stage="conversation"],
 body.theme-light [class*="titlebar"],
 body.theme-light [class*="title-bar"],
 body.theme-light [data-testid="title-menu-bar"] {
   background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* 侧栏 sticky 分组头保持高透暖纸底防滚字串底，避免小方块纹理错位 */
+body.theme-light [data-testid="sidebar-split"] .bg-sidebar .bg-sidebar {
+  background-color: rgb(247 243 235 / 0.90) !important;
   background-image: none !important;
 }
 
@@ -185,96 +211,120 @@ body.theme-light [data-testid="title-menu-bar"] {
 }
 
 /* ==========================================================================
-   3. 彩铅抱书场景舞台与响应式构图（移植自 P11 / P12）
+   3. 彩铅抱书场景舞台与响应式构图（静止全高舞台 + 右侧清晰立绘）
    ========================================================================== */
 body.theme-light [data-dxl-stage="conversation"] {
   position: relative !important;
-  isolation: isolate;
+  isolation: isolate !important;
+  overflow: hidden;
   container-name: dxl-reading;
   container-type: inline-size;
 }
 
+body.theme-light[data-has-browser-hole="true"] [data-dxl-stage="conversation"]::before,
+body.theme-light [data-dxl-stage="conversation"]:has([data-browser-hole="true"])::before {
+  display: none !important;
+}
+
 body.theme-light [data-dxl-stage="conversation"]::before {
   content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
+  position: absolute !important;
+  inset: auto !important;
+  top: 50% !important;
+  right: -24px !important;
+  width: auto !important;
+  height: min(100%, 1240px) !important;
+  aspect-ratio: 3 / 2;
+  transform: translateY(-50%) !important;
+  z-index: -1 !important;
+  opacity: 1 !important;
+  clip-path: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
   pointer-events: none;
   background-color: transparent;
   background-image: url("__DXL_READING_URI__");
   background-repeat: no-repeat;
-  background-position: right -150px center;
-  background-size: auto min(100%, 720px);
+  background-position: center;
+  background-size: 100% 100%;
   mask-image:
-    linear-gradient(90deg, transparent, #000 22%),
-    linear-gradient(transparent, #000 64px, #000 calc(100% - 64px), transparent);
+    linear-gradient(90deg, transparent 24%, rgb(0 0 0 / 0.16) 40%, #000 56%, #000 calc(100% - 28px), transparent),
+    linear-gradient(180deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
   mask-composite: intersect;
 }
 
 /* 窄列优先保正文清晰，只减弱插画层墨迹，不降低文字与控件不透明度 */
 @container dxl-reading (max-width: 899.98px) {
   body.theme-light [data-dxl-stage="conversation"]::before {
-    background-size: auto 58%;
-    background-position: right -110px center;
+    inset: 0 !important;
+    top: 0 !important;
+    right: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    aspect-ratio: auto;
+    transform: none !important;
+    background-size: auto 64%;
+    background-position: right -96px center;
     mask-image:
-      linear-gradient(90deg, transparent 60%, rgb(0 0 0 / 0.03) 76%, rgb(0 0 0 / 0.10) 90%, rgb(0 0 0 / 0.24)),
-      linear-gradient(transparent, #000 64px, #000 calc(100% - 64px), transparent);
+      linear-gradient(90deg, transparent 52%, rgb(0 0 0 / 0.08) 68%, rgb(0 0 0 / 0.24) 84%, rgb(0 0 0 / 0.42)),
+      linear-gradient(transparent, #000 56px, #000 calc(100% - 56px), transparent);
     mask-composite: intersect;
   }
 }
 
 @container dxl-reading (max-width: 640px) {
   body.theme-light [data-dxl-stage="conversation"]::before {
-    background-size: auto 50%;
-    background-position: right -84px center;
+    background-size: auto 54%;
+    background-position: right -72px center;
     mask-image:
-      linear-gradient(90deg, transparent 68%, rgb(0 0 0 / 0.02) 82%, rgb(0 0 0 / 0.08) 94%, rgb(0 0 0 / 0.20)),
+      linear-gradient(90deg, transparent 62%, rgb(0 0 0 / 0.04) 76%, rgb(0 0 0 / 0.14) 90%, rgb(0 0 0 / 0.28)),
       linear-gradient(transparent, #000 48px, #000 calc(100% - 48px), transparent);
     mask-composite: intersect;
   }
 }
 
-/* 900–1099px 窗口模式：复刻 P12 连续纸面 + 人物向右微偏避开主要阅读列 */
+/* 900–1099px 窗口模式：保持右侧清晰人物 + 左侧留白给阅读列 */
 @container dxl-reading (min-width: 900px) and (max-width: 1099.98px) {
   body.theme-light [data-dxl-stage="conversation"]::before {
-    inset: auto;
-    top: 50%;
-    right: -144px;
-    width: auto;
-    height: min(calc(100% - 32px), 1280px);
+    inset: auto !important;
+    top: 50% !important;
+    right: -110px !important;
+    width: auto !important;
+    height: min(100%, 960px) !important;
     aspect-ratio: 3 / 2;
-    transform: translateY(-50%);
+    transform: translateY(-50%) !important;
     background-position: center;
     background-size: 100% 100%;
     mask-image:
-      linear-gradient(90deg, transparent 42%, rgb(0 0 0 / 0.12) 50%, #000 65%, #000 calc(100% - 64px), transparent),
-      linear-gradient(180deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+      linear-gradient(90deg, transparent 34%, rgb(0 0 0 / 0.18) 48%, #000 66%, #000 calc(100% - 36px), transparent),
+      linear-gradient(180deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
     mask-composite: intersect;
   }
 }
 
-/* >=1100px 宽屏：1920px 共同舞台 + 左阅读右人物构图 */
+/* >=1100px 宽屏：人物紧贴右侧画布并全高呈现 + 阅读列向左让出立绘区 */
 @container dxl-reading (min-width: 1100px) {
   body.theme-light [data-dxl-stage="conversation"]::before {
-    inset: auto;
-    top: 50%;
-    right: calc(max(0px, (100% - 1920px) / 2) - 24px);
-    width: auto;
-    height: min(calc(100% - 32px), 1280px);
+    inset: auto !important;
+    top: 50% !important;
+    right: -24px !important;
+    width: auto !important;
+    height: min(100%, 1240px) !important;
     aspect-ratio: 3 / 2;
-    transform: translateY(-50%);
+    transform: translateY(-50%) !important;
     background-position: center;
     background-size: 100% 100%;
     mask-image:
-      linear-gradient(90deg, transparent 42%, rgb(0 0 0 / 0.12) 50%, #000 65%, #000 calc(100% - 64px), transparent),
-      linear-gradient(180deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+      linear-gradient(90deg, transparent 24%, rgb(0 0 0 / 0.16) 40%, #000 56%, #000 calc(100% - 28px), transparent),
+      linear-gradient(180deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
     mask-composite: intersect;
   }
 
-  /* 仅当开启宽屏左阅读偏移且未传入 data-dxl-shift="off" 时，将居中的阅读/输入列微向左让出右侧插画区 */
+  /* 仅当开启宽屏左阅读偏移且未传入 data-dxl-shift="off" 时，将居中的阅读/输入列向左让出右侧插画区 */
   html:not([data-dxl-shift="off"]) body.theme-light [data-dxl-stage="conversation"] [data-dxl-reading-track="true"] {
-    margin-left: clamp(24px, 4cqi, 64px) !important;
+    margin-left: clamp(28px, calc(12cqi - 92px), 220px) !important;
     margin-right: auto !important;
+    align-self: flex-start !important;
   }
 }
 
@@ -282,11 +332,16 @@ body.theme-light [data-dxl-stage="conversation"]::before {
    4. Antigravity 组件适配（输入框、气泡、侧栏、渐隐遮罩、代码卡、弹窗）
    ========================================================================== */
 
-/* 输入框外框与非聚焦轻纸卡阴影 */
+/* 输入框外框、内卡纸白与非聚焦轻阴影 */
 body.theme-light #antigravity\.agentSidePanelInputBox {
   background-color: var(--dxl-border-soft) !important;
   box-shadow: 0 3px 14px rgb(49 58 80 / 0.06) !important;
   transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+body.theme-light #antigravity\.agentSidePanelInputBox .surface-composer-card,
+body.theme-light .surface-composer > .surface-composer-card {
+  background-color: var(--dxl-paper-card) !important;
 }
 
 body.theme-light #antigravity\.agentSidePanelInputBox:focus-within {
@@ -308,6 +363,9 @@ body.theme-light [data-testid="send-button"]:not(:disabled):hover {
 body.theme-light [data-testid="user-input-step"] {
   --card: var(--dxl-bubble) !important;
   --color-card: var(--dxl-bubble) !important;
+  --secondary: var(--dxl-bubble) !important;
+  --muted: var(--dxl-bubble) !important;
+  --onyx-well: var(--dxl-bubble) !important;
   --card-border: var(--dxl-border-soft) !important;
   --color-card-border: var(--dxl-border-soft) !important;
 }
@@ -411,6 +469,8 @@ body.theme-light [data-dxl-avatar] {
   justify-content: center;
   width: 24px;
   height: 24px;
+  margin-left: 8px;
+  margin-right: 4px;
   flex-shrink: 0;
   pointer-events: none;
   user-select: none;

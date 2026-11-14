@@ -427,21 +427,42 @@ export function buildInjectScript(
   const hasConversationContent = (el) => Boolean(
     el &&
     (el.querySelector('#antigravity\\\\.agentSidePanelInputBox') ||
+      el.querySelector('[data-testid="conversation-view"]') ||
+      el.querySelector('[data-testid="home-greeting"]') ||
+      el.querySelector('.agy-home') ||
       el.querySelector('[data-testid="send-button"]') ||
       el.querySelector('[data-testid="user-input-step"]') ||
       el.querySelector('[data-testid="planner-response-text"]'))
   );
 
   const findConversationStage = () => {
+    const mainBody = document.querySelector('[data-main-content-body="true"]');
+    if (mainBody && !isExcludedRegion(mainBody) && hasConversationContent(mainBody)) {
+      const innerContainer = mainBody.querySelector(':scope > .flex-1.min-h-0');
+      if (innerContainer && !isExcludedRegion(innerContainer) && hasConversationContent(innerContainer)) {
+        return innerContainer;
+      }
+      return mainBody;
+    }
+
+    const overviewHost =
+      document.querySelector('[data-testid="overview-panel-host"]') ||
+      document.querySelector('.agy-home');
+    if (overviewHost && !isExcludedRegion(overviewHost) && hasConversationContent(overviewHost)) {
+      return overviewHost;
+    }
+
     const candidates = document.querySelectorAll('.outline-none[style*="container-type"] > div:first-child');
     for (const candidate of candidates) {
-      if (!isExcludedRegion(candidate) && hasConversationContent(candidate)) {
+      const cls = typeof candidate.className === 'string' ? candidate.className : '';
+      if (!cls.includes('mx-auto') && !isExcludedRegion(candidate) && hasConversationContent(candidate)) {
         return candidate;
       }
     }
 
     const anchor =
       document.getElementById('antigravity.agentSidePanelInputBox') ||
+      document.querySelector('[data-testid="home-greeting"]') ||
       document.querySelector('[data-testid="planner-response-text"]') ||
       document.querySelector('[data-testid="user-input-step"]') ||
       document.querySelector('[data-testid="send-button"]');
@@ -456,9 +477,10 @@ export function buildInjectScript(
         const styleAttr = current.getAttribute('style') || '';
         const cls = typeof current.className === 'string' ? current.className : '';
         if (
-          styleAttr.includes('container-type') ||
-          cls.includes('overflow-y-auto') ||
-          cls.includes('flex-col')
+          !cls.includes('mx-auto') &&
+          (styleAttr.includes('container-type') ||
+            cls.includes('overflow-y-auto') ||
+            cls.includes('flex-col'))
         ) {
           best = current;
           if (current.parentElement?.classList?.contains('outline-none')) {
@@ -485,17 +507,21 @@ export function buildInjectScript(
     if (targetStage) {
       targetStage.setAttribute('data-dxl-stage', 'conversation');
       const trackHooks = targetStage.querySelectorAll(
-        '[data-testid="user-input-step"], [data-testid="planner-response-text"], #antigravity\\\\.agentSidePanelInputBox'
+        '[data-testid="user-input-step"], [data-testid="planner-response-text"], [data-testid="home-greeting"], #antigravity\\\\.agentSidePanelInputBox'
       );
       for (const hook of trackHooks) {
         let node = hook;
         while (node && node !== targetStage) {
           const parent = node.parentElement;
           const cls = typeof node.className === 'string' ? node.className : '';
-          if (
-            !isExcludedRegion(node) &&
-            (cls.includes('mx-auto') || cls.includes('max-w-') || parent === targetStage)
-          ) {
+          const parentCls = typeof parent?.className === 'string' ? parent.className : '';
+          const isTrackContainer =
+            cls.includes('mx-auto') ||
+            cls.includes('max-w-') ||
+            (node === hook && hook.getAttribute('data-testid') === 'home-greeting') ||
+            (parentCls.includes('items-center') && !cls.includes('flex-1 min-h-0') && !cls.includes('overflow-y-auto')) ||
+            parent === targetStage;
+          if (!isExcludedRegion(node) && isTrackContainer) {
             desiredTracks.add(node);
             break;
           }
@@ -525,7 +551,10 @@ export function buildInjectScript(
       return;
     }
 
-    const sidebar = document.querySelector('.bg-sidebar');
+    const sidebar =
+      document.querySelector('[data-testid="sidebar-split"] .bg-sidebar.flex-col') ||
+      document.querySelector('.bg-sidebar.flex-col') ||
+      document.querySelector('.bg-sidebar');
     if (!sidebar) {
       for (const node of existingList) {
         node.remove();

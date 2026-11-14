@@ -143,6 +143,69 @@ test('运行时脚本仅在 theme-light 生效、自动退出深色模式且卸�
   assert.equal(page.observers.every((o) => !o.connected), true, '卸载后所有 MutationObserver 应断开');
 });
 
+test('新版 Antigravity 布局优先将 [data-main-content-body] > .flex-1.min-h-0 标为舞台而非 .mx-auto，并挂载左侧栏首行头像', () => {
+  const assets = loadThemeAssets(ROOT);
+  const css = buildThemeCss({ rootDir: ROOT });
+  const script = buildInjectScript(css, {
+    avatarDataUri: assets.avatar.dataUri,
+    avatar: true,
+    shift: true,
+    version: '0.1.0',
+  });
+
+  const page = createMockAntigravityPage({ light: true });
+  const { document, elements } = page;
+  const { body } = elements;
+  document.getElementById('root')?.remove();
+
+  const root = document.createElement('div');
+  root.id = 'root';
+  body.appendChild(root);
+
+  const sidebarSplit = document.createElement('div');
+  sidebarSplit.setAttribute('data-testid', 'sidebar-split');
+  const sidebarCol = document.createElement('div');
+  sidebarCol.setAttribute('class', 'bg-sidebar flex-col');
+  const sidebarTopBar = document.createElement('div');
+  sidebarTopBar.setAttribute('class', 'flex items-center');
+  sidebarCol.appendChild(sidebarTopBar);
+  sidebarSplit.appendChild(sidebarCol);
+
+  const mainBody = document.createElement('div');
+  mainBody.setAttribute('data-main-content-body', 'true');
+  const fullStage = document.createElement('div');
+  fullStage.setAttribute('class', 'flex-1 min-h-0');
+  const scrollArea = document.createElement('div');
+  scrollArea.setAttribute('class', 'overflow-y-auto');
+  const narrowCol = document.createElement('div');
+  narrowCol.setAttribute('class', 'mx-auto w-full');
+  const userStep = document.createElement('div');
+  userStep.setAttribute('data-testid', 'user-input-step');
+  narrowCol.appendChild(userStep);
+  scrollArea.appendChild(narrowCol);
+
+  const composerWrap = document.createElement('div');
+  composerWrap.setAttribute('class', 'mx-auto w-full');
+  const inputBox = document.createElement('div');
+  inputBox.id = 'antigravity.agentSidePanelInputBox';
+  composerWrap.appendChild(inputBox);
+
+  fullStage.appendChild(scrollArea);
+  fullStage.appendChild(composerWrap);
+  mainBody.appendChild(fullStage);
+  root.appendChild(sidebarSplit);
+  root.appendChild(mainBody);
+
+  const res = page.evaluate(script);
+  assert.equal(res.hasStage, true);
+  assert.equal(res.hasAvatar, true);
+  assert.equal(fullStage.getAttribute('data-dxl-stage'), 'conversation', '主舞台应落在不随消息滚动的 .flex-1.min-h-0');
+  assert.equal(narrowCol.getAttribute('data-dxl-stage'), null, '.mx-auto 阅读列不应被标为主舞台');
+  assert.equal(narrowCol.getAttribute('data-dxl-reading-track'), 'true', '聊天阅读列应被标记左移轨道');
+  assert.equal(composerWrap.getAttribute('data-dxl-reading-track'), 'true', '输入框包裹层应被标记左移轨道');
+  assert.equal(sidebarTopBar.firstElementChild?.getAttribute('data-dxl-avatar'), 'true', '头像应挂载在左侧栏顶部栏首个子节点');
+});
+
 test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、removeOnce 清理与未运行容错', async () => {
   const domMap = new Map();
   const server = await startMockCdpServer({

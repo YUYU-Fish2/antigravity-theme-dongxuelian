@@ -42,6 +42,21 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
   assert.ok(css.includes('[class*="after:from-background"]::after'), '缺少顶部分组 sticky 渐隐覆盖');
   assert.ok(css.includes('[role="menu"]'), '缺少实色纸白弹窗/菜单规则');
   assert.ok(css.includes('body.theme-light [data-dxl-avatar]'), '缺少侧栏头像浅色展示规则');
+  assert.ok(css.includes('--shell: #F7F3EB !important'), '缺少 --shell 暖纸底覆盖');
+  assert.ok(css.includes('--onyx-raised: #FFFDF8 !important'), '缺少 --onyx-raised 纸白卡片覆盖');
+  assert.ok(
+    css.includes('.agy-shell') && css.includes('.agy-inset-shell') && css.includes('[data-main-content-body]'),
+    '缺少 Antigravity 外壳与主画布透明穿透规则',
+  );
+  assert.ok(
+    css.includes('opacity: 1 !important;') && css.includes('clip-path: none !important;'),
+    '缺少对 Antigravity 原生 ::before 遮罩隐藏的显式覆盖',
+  );
+  assert.ok(
+    css.includes('.surface-composer-card') &&
+      css.includes('margin-left: clamp(28px, calc(12cqi - 92px), 220px) !important'),
+    '缺少输入框纸白卡片及宽屏左侧让位规则',
+  );
   assert.ok(
     css.includes(':not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"])'),
     '缺少内置浏览器 WebContentsView 透明打孔豁免规则',
