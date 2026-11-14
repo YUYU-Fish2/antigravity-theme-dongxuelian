@@ -403,14 +403,21 @@ body.theme-light [class~="bottom-0"][class~="inset-x-4"][class~="pointer-events-
   background-image: linear-gradient(to top, rgb(247 243 235 / 0.90), transparent) !important;
 }
 
+/* 方案 B1：助手对话回复区叠加无边框半透明暖纸晕染底与外围柔羽，在无画区域保持隐形、压在人物上时温和提亮以保阅读清晰 */
+body.theme-light :is([data-testid="agent-response"], [data-testid="planner-response-text"]) {
+  background-color: rgb(247 243 235 / 0.78) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 0 20px 10px rgb(247 243 235 / 0.66) !important;
+}
+
 /* Markdown 代码块、行内代码、引用块 */
 body.theme-light pre,
-body.theme-light [data-testid="planner-response-text"] pre {
+body.theme-light :is([data-testid="planner-response-text"], [data-testid="agent-response"]) pre {
   background-color: var(--dxl-paper-card) !important;
   border: 1px solid var(--dxl-border-soft) !important;
 }
 
-body.theme-light [data-testid="planner-response-text"] code:not(pre code) {
+body.theme-light :is([data-testid="planner-response-text"], [data-testid="agent-response"]) code:not(pre code) {
   background-color: var(--dxl-sidebar-color) !important;
   color: var(--dxl-ink-primary) !important;
   border: 1px solid var(--dxl-border-soft) !important;
@@ -418,13 +425,13 @@ body.theme-light [data-testid="planner-response-text"] code:not(pre code) {
   padding: 1px 5px !important;
 }
 
-body.theme-light [data-testid="planner-response-text"] blockquote {
+body.theme-light :is([data-testid="planner-response-text"], [data-testid="agent-response"]) blockquote {
   background-color: rgb(255 253 248 / 0.85) !important;
   border-left: 3px solid var(--dxl-accent) !important;
   color: var(--dxl-ink-primary) !important;
 }
 
-body.theme-light [data-testid="planner-response-text"] a {
+body.theme-light :is([data-testid="planner-response-text"], [data-testid="agent-response"]) a {
   color: var(--dxl-accent-hover) !important;
 }
 
