@@ -27,6 +27,8 @@ import {
 const execFileAsync = promisify(execFile);
 
 export const WINDOWS_TASK_NAME = 'DongxuelianAntigravityTheme';
+/** Windows 任务计划看门狗复查间隔（分钟） */
+export const WINDOWS_WATCHDOG_INTERVAL_MINUTES = 3;
 export const WINDOWS_REG_KEY_PS = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 export const WINDOWS_REG_VALUE = 'DongxuelianAntigravityTheme';
 export const MACOS_LAUNCHD_LABEL = 'io.dongxuelian.antigravity-theme';
@@ -34,6 +36,10 @@ export const LINUX_DESKTOP_FILENAME = 'antigravity-theme-dongxuelian.desktop';
 export const RUNTIME_DIR_NAME = '.runtime';
 export const INSTALL_STATE_FILENAME = 'install-state.json';
 export const VBS_LAUNCHER_FILENAME = 'launch-watch.vbs';
+export const DAEMON_NODE_ARGS = Object.freeze([
+  '--max-semi-space-size=1',
+  '--max-old-space-size=48',
+]);
 
 function escapePsSingleQuote(value) {
   return String(value).replaceAll("'", "''");
@@ -115,18 +121,44 @@ export function buildWatchDaemonArgs(options = {}, { includeIfNotRunning = true 
  * @param {object} params
  * @returns {string}
  */
-export function buildWindowsVbsScript({ nodePath, watchScriptPath, rootDir, daemonArgs }) {
-  const cmdParts = [nodePath, watchScriptPath, ...daemonArgs].map(
+export function buildWindowsVbsScript({
+  nodePath,
+  watchScriptPath,
+  rootDir,
+  daemonArgs,
+  nodeArgs = [],
+  pidFile = join(String(rootDir), '.watch.pid'),
+}) {
+  const cmdParts = [nodePath, ...nodeArgs, watchScriptPath, ...daemonArgs].map(
     (part) => `"${String(part).replaceAll('"', '""')}"`,
   );
   const fullCmd = cmdParts.join(' ');
   const vbsCmd = fullCmd.replaceAll('"', '""');
   const vbsDir = String(rootDir).replaceAll('"', '""');
+  const vbsPid = String(pidFile).replaceAll('"', '""');
   return [
     'Option Explicit',
-    'Dim shell',
+    'Dim shell, fso, pidFile, pidText, ts, wmi, procs',
     'Set shell = CreateObject("WScript.Shell")',
+    'Set fso = CreateObject("Scripting.FileSystemObject")',
     `shell.CurrentDirectory = "${vbsDir}"`,
+    `pidFile = "${vbsPid}"`,
+    // 看门狗快速路径：守护进程仍存活时直接退出，避免每次定时触发都拉起 node 进程
+    'On Error Resume Next',
+    'If fso.FileExists(pidFile) Then',
+    '  Set ts = fso.OpenTextFile(pidFile, 1)',
+    '  pidText = Trim(Replace(Replace(ts.ReadAll, vbCr, ""), vbLf, ""))',
+    '  ts.Close',
+    '  If Len(pidText) > 0 And IsNumeric(pidText) Then',
+    '    Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")',
+    `    Set procs = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE ProcessId = " & CLng(pidText) & " AND CommandLine LIKE '%watch.js%'")`,
+    '    If Err.Number = 0 Then',
+    '      If procs.Count > 0 Then WScript.Quit 0',
+    '    End If',
+    '  End If',
+    'End If',
+    'Err.Clear',
+    'On Error GoTo 0',
     `shell.Run "${vbsCmd}", 0, False`,
     '',
   ].join('\r\n');
@@ -142,8 +174,9 @@ export function buildMacLaunchAgentPlist({
   rootDir,
   daemonArgs,
   logFile,
+  nodeArgs = [],
 }) {
-  const argsXml = [nodePath, watchScriptPath, ...daemonArgs]
+  const argsXml = [nodePath, ...nodeArgs, watchScriptPath, ...daemonArgs]
     .map((item) => `    <string>${escapeXml(item)}</string>`)
     .join('\n');
   return [
@@ -179,8 +212,14 @@ export function buildMacLaunchAgentPlist({
 /**
  * 生成 Linux XDG Autostart `.desktop` 文件内容。
  */
-export function buildLinuxDesktopEntry({ nodePath, watchScriptPath, rootDir, daemonArgs }) {
-  const execLine = [nodePath, watchScriptPath, ...daemonArgs].map(quoteShellArg).join(' ');
+export function buildLinuxDesktopEntry({
+  nodePath,
+  watchScriptPath,
+  rootDir,
+  daemonArgs,
+  nodeArgs = [],
+}) {
+  const execLine = [nodePath, ...nodeArgs, watchScriptPath, ...daemonArgs].map(quoteShellArg).join(' ');
   return [
     '[Desktop Entry]',
     'Type=Application',
@@ -261,6 +300,8 @@ async function registerAutostart({
       watchScriptPath: paths.watchBin,
       rootDir,
       daemonArgs,
+      nodeArgs: DAEMON_NODE_ARGS,
+      pidFile: paths.pidFile,
     });
     writeFileSync(paths.vbsFile, Buffer.from(`\uFEFF${vbsContent}`, 'utf16le'));
 
@@ -268,7 +309,11 @@ async function registerAutostart({
     const wscriptExe = join(sysRoot, 'System32', 'wscript.exe');
     const hasWscript = existsSync(wscriptExe);
     const launchExe = hasWscript ? wscriptExe : 'powershell.exe';
-    const psFallbackCmd = `& '${escapePsSingleQuote(nodePath)}' '${escapePsSingleQuote(paths.watchBin)}' ${daemonArgs
+    const psFallbackCmd = `& '${escapePsSingleQuote(nodePath)}' ${[
+      ...DAEMON_NODE_ARGS,
+      paths.watchBin,
+      ...daemonArgs,
+    ]
       .map((a) => `'${escapePsSingleQuote(a)}'`)
       .join(' ')}`;
     const launchArgs = hasWscript
@@ -283,8 +328,10 @@ async function registerAutostart({
       "$userId = if ($env:USERDOMAIN) { \"$env:USERDOMAIN\\$env:USERNAME\" } else { $env:USERNAME }",
       `$action = New-ScheduledTaskAction -Execute '${escapePsSingleQuote(launchExe)}' -Argument '${escapePsSingleQuote(launchArgs)}' -WorkingDirectory '${escapePsSingleQuote(rootDir)}'`,
       '$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId',
-      '$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable',
-      `Register-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -Action $action -Trigger $trigger -Settings $settings -Description 'Antigravity 冬雪莲主题后台守护' -Force | Out-Null`,
+      // 看门狗触发器：每 3 分钟无限期复查一次，守护进程被系统关机中断、异常退出或被结束后自动复活
+      `$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes ${WINDOWS_WATCHDOG_INTERVAL_MINUTES})`,
+      '$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -MultipleInstances IgnoreNew',
+      `Register-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -Action $action -Trigger @($trigger, $watchdog) -Settings $settings -Description 'Antigravity 冬雪莲主题后台守护' -Force | Out-Null`,
     ].join('\n');
 
     try {
@@ -326,6 +373,7 @@ async function registerAutostart({
       rootDir,
       daemonArgs,
       logFile: paths.logFile,
+      nodeArgs: DAEMON_NODE_ARGS,
     });
     writeFileSync(plistFile, plist, 'utf8');
     await execFileImpl('launchctl', ['unload', plistFile]).catch(() => {});
@@ -350,6 +398,7 @@ async function registerAutostart({
     watchScriptPath: paths.watchBin,
     rootDir,
     daemonArgs,
+    nodeArgs: DAEMON_NODE_ARGS,
   });
   writeFileSync(desktopFile, desktop, 'utf8');
   const state = {
@@ -520,6 +569,24 @@ function readLogTail(logFile, maxLines = 10) {
   }
 }
 
+function readLivePidWithChecker(pidFile, isAliveImpl) {
+  if (isAliveImpl === isProcessAlive) {
+    return readLiveWatcherPid(pidFile);
+  }
+  if (!existsSync(pidFile)) {
+    return null;
+  }
+  try {
+    const candidate = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+    if (Number.isInteger(candidate) && candidate > 0 && isAliveImpl(candidate)) {
+      return candidate;
+    }
+  } catch {
+    // 等待 PID 文件写入完整
+  }
+  return null;
+}
+
 async function startBackgroundDaemon({
   rootDir,
   watchBin,
@@ -527,6 +594,7 @@ async function startBackgroundDaemon({
   pidFile,
   logFile,
   nodePath = process.execPath,
+  nodeArgs = DAEMON_NODE_ARGS,
   spawnImpl = nodeSpawn,
   isAliveImpl = isProcessAlive,
   startupTimeoutMs = 3000,
@@ -535,7 +603,7 @@ async function startBackgroundDaemon({
   let earlyExitCode = null;
   let spawnError = null;
 
-  const child = spawnImpl(nodePath, [watchBin, ...daemonArgs], {
+  const child = spawnImpl(nodePath, [...nodeArgs, watchBin, ...daemonArgs], {
     cwd: rootDir,
     detached: true,
     windowsHide: true,
@@ -555,6 +623,13 @@ async function startBackgroundDaemon({
       throw new Error(`启动后台监听守护失败：${spawnError.message}`);
     }
     if (earlyExitCode !== null) {
+      // 带 --if-not-running 时若已有守护存活，子进程会以 0 正常让位退出
+      if (earlyExitCode === 0) {
+        const existingPid = readLivePidWithChecker(pidFile, isAliveImpl);
+        if (existingPid) {
+          return { pid: existingPid };
+        }
+      }
       const tail = readLogTail(logFile);
       throw new Error(
         `后台监听守护提前退出（退出码 ${earlyExitCode}）${tail ? `：\n${tail}` : ''}`,
@@ -600,19 +675,7 @@ async function tryStartViaScheduledTask({
 
   const deadline = Date.now() + Math.max(1500, startupTimeoutMs);
   while (Date.now() < deadline) {
-    let pidNum = null;
-    if (isAliveImpl === isProcessAlive) {
-      pidNum = readLiveWatcherPid(pidFile);
-    } else if (existsSync(pidFile)) {
-      try {
-        const candidate = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
-        if (Number.isInteger(candidate) && candidate > 0 && isAliveImpl(candidate)) {
-          pidNum = candidate;
-        }
-      } catch {
-        // 等待 PID 文件写入完整
-      }
-    }
+    const pidNum = readLivePidWithChecker(pidFile, isAliveImpl);
     if (pidNum) {
       return { pid: pidNum, launchedVia: 'windows-task-scheduler' };
     }
@@ -621,7 +684,7 @@ async function tryStartViaScheduledTask({
   return null;
 }
 
-async function probeCdpPages({ port, portFile, fetchImpl = fetch, timeoutMs = 1500 }) {
+async function probeCdpPages({ port, portFile, fetchImpl, timeoutMs = 1500 }) {
   try {
     const targetPort = readPort(portFile, { port });
     const pages = await listPages(targetPort, { fetchImpl, timeoutMs });
@@ -649,7 +712,7 @@ export async function installTheme(options = {}) {
   const execFileImpl = options.execFileImpl || execFileAsync;
   const spawnImpl = options.spawnImpl || nodeSpawn;
   const isAliveImpl = options.isAliveImpl || isProcessAlive;
-  const fetchImpl = options.fetchImpl || fetch;
+  const fetchImpl = options.fetchImpl;
 
   // 预先校验资源、CSS 与词典，参数或文件异常时快速失败且不污染系统自启项
   const { version } = prepareRuntimePayload({
@@ -673,7 +736,7 @@ export async function installTheme(options = {}) {
     execFileImpl,
   });
 
-  const daemonArgs = buildWatchDaemonArgs(normalizedOptions, { includeIfNotRunning: false });
+  const daemonArgs = buildWatchDaemonArgs(normalizedOptions, { includeIfNotRunning: true });
   let daemon = null;
   if (platform === 'win32' && autostart.method === 'windows-task-scheduler' && !options.spawnImpl) {
     daemon = await tryStartViaScheduledTask({
@@ -784,7 +847,7 @@ export async function getInstallStatus(options = {}) {
   const portFile = options.portFile || getPortFilePath({ platform, env, home });
   const logger = options.logger ?? console;
   const execFileImpl = options.execFileImpl || execFileAsync;
-  const fetchImpl = options.fetchImpl || fetch;
+  const fetchImpl = options.fetchImpl;
 
   const autostart = await queryAutostart({ rootDir, platform, env, home, execFileImpl });
   const watcherPid = readLiveWatcherPid(paths.pidFile);

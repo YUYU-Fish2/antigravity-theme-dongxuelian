@@ -81,7 +81,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 
   const readNextOptionValue = (index, missingMessage) => {
     const next = argv[index + 1];
-    if (next === undefined || next.startsWith('-')) {
+    // 仅把 `--xxx` / `-h` 视为下一个选项，允许以单个 `-` 开头的路径值
+    if (next === undefined || next.startsWith('--') || next === '-h') {
       throw new Error(missingMessage);
     }
     return next;
@@ -241,8 +242,8 @@ export async function injectOnce(options = {}) {
     shift = true,
     i18n = true,
     i18nOverride,
-    fetchImpl = fetch,
-    WebSocketImpl = globalThis.WebSocket,
+    fetchImpl,
+    WebSocketImpl,
     timeoutMs = 5000,
     logger = console,
   } = options;
@@ -251,11 +252,12 @@ export async function injectOnce(options = {}) {
   const pages = await listPages(targetPort, { fetchImpl, timeoutMs });
   if (pages.length === 0) {
     logger.warn(`[冬雪莲] 在端口 ${targetPort} 未发现可注入的 Antigravity 页面窗口。`);
-    return { port: targetPort, injectedCount: 0, results: [] };
+    return { port: targetPort, injectedCount: 0, results: [], failures: [] };
   }
 
   const { script, version } = prepareRuntimePayload({ rootDir, avatar, shift, i18n, i18nOverride });
   const results = [];
+  const failures = [];
 
   for (const page of pages) {
     const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
@@ -272,15 +274,22 @@ export async function injectOnce(options = {}) {
         scriptId,
         evalResult,
       });
+    } catch (err) {
+      // 单个页面失败不影响其余窗口
+      failures.push({ id: page.id, title: page.title || '', error: err.message });
+      logger.warn(`[冬雪莲] 注入页面失败（${page.title || page.id}）：${err.message}`);
     } finally {
-      await session.close();
+      await session.close().catch(() => {});
     }
   }
 
+  if (results.length === 0) {
+    throw new Error(`全部 ${failures.length} 个页面注入失败：${failures.map((f) => f.error).join('；')}`);
+  }
   logger.log(
-    `[冬雪莲 v${version}] 已向 ${results.length} 个 Antigravity 页面注入主题（端口 ${targetPort}）。`,
+    `[冬雪莲 v${version}] 已向 ${results.length} 个 Antigravity 页面注入主题（端口 ${targetPort}）${failures.length ? `，${failures.length} 个页面失败` : ''}。`,
   );
-  return { port: targetPort, injectedCount: results.length, results };
+  return { port: targetPort, injectedCount: results.length, results, failures };
 }
 
 export function unlinkQuietly(filePath) {
@@ -311,13 +320,13 @@ export function isProcessAlive(pid) {
 }
 
 /**
- * 判断指定 PID 是否为存活中的 Node 进程（避免重启后 PID 复用导致误判或误杀）。
+ * 探测指定 PID 的进程类型。
  * @param {number} pid
- * @returns {boolean}
+ * @returns {'node'|'other'|'dead'|'unknown'} `unknown` 表示进程存活但无法确认其映像（探测命令失败或超时）
  */
-export function isNodeProcessPid(pid) {
+export function getNodeProcessStatus(pid) {
   if (!isProcessAlive(pid)) {
-    return false;
+    return 'dead';
   }
   try {
     if (process.platform === 'win32') {
@@ -326,29 +335,49 @@ export function isNodeProcessPid(pid) {
         windowsHide: true,
         timeout: 2000,
       });
-      const lower = out.toLowerCase();
-      return lower.includes('"node.exe"') && out.includes(`"${pid}"`);
+      if (!out.includes(`"${pid}"`)) {
+        // tasklist 未列出该 PID：进程已退出
+        return isProcessAlive(pid) ? 'unknown' : 'dead';
+      }
+      return out.toLowerCase().includes('"node.exe"') ? 'node' : 'other';
     }
     if (process.platform === 'linux' && existsSync(`/proc/${pid}/comm`)) {
       const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim().toLowerCase();
-      return comm.startsWith('node');
+      return comm.startsWith('node') ? 'node' : 'other';
     }
     const out = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], {
       encoding: 'utf8',
       timeout: 2000,
     });
-    return basename(out.trim()).toLowerCase().startsWith('node');
+    return basename(out.trim()).toLowerCase().startsWith('node') ? 'node' : 'other';
   } catch {
-    return true;
+    return 'unknown';
   }
 }
 
 /**
- * 读取 `.watch.pid` 文件中记录的存活 Node 进程 PID；若无效或已失效则清理文件。
+ * 判断指定 PID 是否为存活中的 Node 进程（避免重启后 PID 复用导致误判或误杀）。
+ * @param {number} pid
+ * @param {object} [options]
+ * @param {boolean} [options.assumeOnUnknown] 无法确认进程映像时的返回值（默认 true：保守视为仍在运行）
+ * @returns {boolean}
+ */
+export function isNodeProcessPid(pid, { assumeOnUnknown = true } = {}) {
+  const status = getNodeProcessStatus(pid);
+  if (status === 'unknown') {
+    return assumeOnUnknown;
+  }
+  return status === 'node';
+}
+
+/**
+ * 读取 `.watch.pid` 文件中记录的存活 Node 进程 PID；若进程已退出或已被其他程序复用则清理文件。
  * @param {string} pidFile
+ * @param {object} [options]
+ * @param {boolean} [options.assumeOnUnknown] 无法确认进程映像时是否仍视为守护进程（默认 true，避免重复拉起）
  * @returns {number|null}
  */
-export function readLiveWatcherPid(pidFile) {
+export function readLiveWatcherPid(pidFile, { assumeOnUnknown = true } = {}) {
   if (!pidFile || !existsSync(pidFile)) {
     return null;
   }
@@ -362,16 +391,28 @@ export function readLiveWatcherPid(pidFile) {
   } catch {
     return null;
   }
-  if (!parsedPid || !isNodeProcessPid(parsedPid)) {
+  if (!parsedPid) {
     unlinkQuietly(pidFile);
+    return null;
+  }
+  const status = getNodeProcessStatus(parsedPid);
+  if (status === 'dead' || status === 'other') {
+    unlinkQuietly(pidFile);
+    return null;
+  }
+  if (status === 'unknown' && !assumeOnUnknown) {
     return null;
   }
   return parsedPid;
 }
 
 export function tryStopWatcherByPidFile(pidFile, logger) {
-  const pid = readLiveWatcherPid(pidFile);
+  // 发送终止信号前必须确认是 Node 进程：无法确认时宁可不杀，避免误伤复用 PID 的其他程序
+  const pid = readLiveWatcherPid(pidFile, { assumeOnUnknown: false });
   if (!pid) {
+    if (existsSync(pidFile)) {
+      logger?.warn?.('[冬雪莲] 无法确认 .watch.pid 记录的进程身份，已跳过停止操作。');
+    }
     return { signaled: false, pid: null };
   }
   let signaled = false;
@@ -418,12 +459,14 @@ export function rotateLogIfNeeded(logFile, maxBytes = 512 * 1024) {
  * @param {string} logFile
  * @returns {{ log: (msg: any) => void, warn: (msg: any) => void, error: (msg: any) => void }}
  */
-export function createDaemonLogger(logFile) {
-  rotateLogIfNeeded(logFile);
+export function createDaemonLogger(logFile, { maxBytes = 512 * 1024 } = {}) {
+  rotateLogIfNeeded(logFile, maxBytes);
   const writeLine = (level, args) => {
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
     const text = args.map((item) => (typeof item === 'string' ? item : String(item))).join(' ');
     try {
+      // 守护进程常驻期间也要轮转（日志写入频率很低，逐行 stat 的开销可忽略）
+      rotateLogIfNeeded(logFile, maxBytes);
       appendFileSync(logFile, `[${ts}] [${level}] ${text}\n`, 'utf8');
     } catch {
       // 忽略日志写入失败
@@ -448,8 +491,8 @@ export async function removeOnce(options = {}) {
     port,
     portFile = getPortFilePath(),
     pidFile = join(resolvedRoot, '.watch.pid'),
-    fetchImpl = fetch,
-    WebSocketImpl = globalThis.WebSocket,
+    fetchImpl,
+    WebSocketImpl,
     timeoutMs = 5000,
     logger = console,
   } = options;
@@ -477,6 +520,7 @@ export async function removeOnce(options = {}) {
   }
 
   const results = [];
+  const failures = [];
   for (const page of pages) {
     const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
     try {
@@ -487,12 +531,18 @@ export async function removeOnce(options = {}) {
         title: page.title || '',
         summary,
       });
+    } catch (err) {
+      // 单个页面清理失败时继续处理其余页面
+      failures.push({ id: page.id, title: page.title || '', error: err.message });
+      logger.warn(`[冬雪莲] 清理页面失败（${page.title || page.id}）：${err.message}`);
     } finally {
-      await session.close();
+      await session.close().catch(() => {});
     }
   }
 
-  logger.log(`[冬雪莲] 已从 ${results.length} 个 Antigravity 页面移除主题样式与 DOM 标记。`);
+  logger.log(
+    `[冬雪莲] 已从 ${results.length} 个 Antigravity 页面移除主题样式与 DOM 标记${failures.length ? `（${failures.length} 个页面失败，可重启客户端彻底还原）` : ''}。`,
+  );
   if (!options.skipAutostartHint && existsSync(join(resolvedRoot, '.runtime', 'install-state.json'))) {
     logger.log('[冬雪莲] 提示：当前仍启用开机/登录自启，如需彻底取消请执行 npm run uninstall-theme（或双击 uninstall.bat）。');
   }
@@ -502,6 +552,7 @@ export async function removeOnce(options = {}) {
     stoppedWatcher,
     removedCount: results.length,
     results,
+    failures,
   };
 }
 
@@ -528,13 +579,17 @@ export async function startWatch(options = {}) {
     i18nOverride,
     pollIntervalMs = 2000,
     cssDebounceMs = 150,
-    fetchImpl = fetch,
-    WebSocketImpl = globalThis.WebSocket,
+    fetchImpl,
+    WebSocketImpl,
     timeoutMs = 5000,
     logger = console,
   } = options;
 
-  let currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
+  const compilePayload = () =>
+    prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
+
+  // 启动时校验一次资产、CSS 与词典，并在首轮同步后立即释放大字符串（约 1.17 MB），避免常驻内存
+  let initialPayload = compilePayload();
   let payloadVersion = 0;
   const attached = new Map();
   let stopped = false;
@@ -556,15 +611,16 @@ export async function startWatch(options = {}) {
     if (stopped) {
       return 0;
     }
+    initialPayload = null;
+    let payload;
     try {
-      currentPayload = prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
+      payload = compilePayload();
       payloadVersion += 1;
     } catch (err) {
       logger.warn(`[冬雪莲] 运行时载荷重新编译失败：${err.message}`);
       return 0;
     }
 
-    const payload = currentPayload;
     let updated = 0;
     for (const [pageId, entry] of Array.from(attached.entries())) {
       try {
@@ -622,35 +678,47 @@ export async function startWatch(options = {}) {
       const pages = await listPages(targetPort, { fetchImpl, timeoutMs });
       waitErrorLogged = false;
 
-      for (const page of pages) {
-        if (stopped || attached.has(page.id)) {
-          continue;
-        }
-        const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
-        try {
-          await session.connect();
-          const versionAtInject = payloadVersion;
-          const payload = currentPayload;
-          const { scriptId } = await injectPageSession(session, payload.script, {
-            pageLabel: page.title || page.id,
-            logger,
-          });
-          session.on('close', () => {
-            attached.delete(page.id);
-          });
-          attached.set(page.id, {
-            session,
-            scriptId,
-            title: page.title || '',
-            payloadVersion: versionAtInject,
-          });
-          if (versionAtInject !== payloadVersion) {
-            needsCatchUp = true;
+      const unattached = pages.filter((page) => !attached.has(page.id));
+      if (!stopped && unattached.length > 0) {
+        let payload = initialPayload;
+        initialPayload = null;
+        if (!payload) {
+          try {
+            payload = compilePayload();
+          } catch (err) {
+            logger.warn(`[冬雪莲] 运行时载荷编译失败：${err.message}`);
+            return attached.size;
           }
-          logger.log(`[冬雪莲] 已挂载并注入页面：${page.title || page.id}`);
-        } catch (err) {
-          await session.close().catch(() => {});
-          logger.warn(`[冬雪莲] 注入页面失败（${page.id}）：${err.message}`);
+        }
+        const versionAtInject = payloadVersion;
+        for (const page of unattached) {
+          if (stopped || attached.has(page.id)) {
+            continue;
+          }
+          const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
+          try {
+            await session.connect();
+            const { scriptId } = await injectPageSession(session, payload.script, {
+              pageLabel: page.title || page.id,
+              logger,
+            });
+            session.on('close', () => {
+              attached.delete(page.id);
+            });
+            attached.set(page.id, {
+              session,
+              scriptId,
+              title: page.title || '',
+              payloadVersion: versionAtInject,
+            });
+            if (versionAtInject !== payloadVersion) {
+              needsCatchUp = true;
+            }
+            logger.log(`[冬雪莲] 已挂载并注入页面：${page.title || page.id}`);
+          } catch (err) {
+            await session.close().catch(() => {});
+            logger.warn(`[冬雪莲] 注入页面失败（${page.id}）：${err.message}`);
+          }
         }
       }
     } catch (err) {
@@ -709,6 +777,7 @@ export async function startWatch(options = {}) {
   }
 
   await syncNow();
+  initialPayload = null;
   pollTimer = setInterval(() => {
     void syncNow();
   }, pollIntervalMs);
@@ -769,6 +838,28 @@ export async function watchLoop(options = {}) {
       : '[冬雪莲] 监听模式已启动（自动追踪新窗口并热重载样式与汉化配置），按 Ctrl+C 退出。',
   );
 
+  // 守护模式下无控制台可见，未处理的 Promise 拒绝只记录日志不退出；未捕获异常记录后退出，交由看门狗复活
+  const onUnhandledRejection = (reason) => {
+    try {
+      logger.error(`[冬雪莲] 未处理的异步异常（已忽略）：${reason?.stack || reason}`);
+    } catch {
+      // 忽略日志写入异常
+    }
+  };
+  const onUncaughtException = (err) => {
+    try {
+      logger.error(`[冬雪莲] 未捕获异常，守护进程退出：${err?.stack || err}`);
+    } catch {
+      // 忽略日志写入异常
+    }
+    unlinkQuietly(pidFile);
+    process.exit(1);
+  };
+  if (isDaemon) {
+    process.on('unhandledRejection', onUnhandledRejection);
+    process.on('uncaughtException', onUncaughtException);
+  }
+
   await new Promise((resolveLoop) => {
     let finishing = false;
     const shutdown = () => {
@@ -776,6 +867,8 @@ export async function watchLoop(options = {}) {
       finishing = true;
       process.off('SIGINT', shutdown);
       process.off('SIGTERM', shutdown);
+      process.off('unhandledRejection', onUnhandledRejection);
+      process.off('uncaughtException', onUncaughtException);
       void controller.stop().finally(() => {
         logger.log('[冬雪莲] 监听模式已退出。');
         resolveLoop();

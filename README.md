@@ -90,7 +90,7 @@ npm run install-theme
 - 自动校验全部主题资产、CSS 与汉化词典；
 - 在后台静默启动守护进程（每 2 秒轻量检测一次本地 CDP 端口，有新窗口或重登页面即自动重注，并监听本地样式/词典热重载）；
 - 写入**当前用户级登录自启**：
-  - **Windows**：生成 UTF-16LE BOM 编码的无窗引导脚本 `.runtime/launch-watch.vbs`，优先注册当前用户任务计划程序 `DongxuelianAntigravityTheme`（插电/电池下均可长驻）；若环境受限，自动回退写入注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`。
+  - **Windows**：生成 UTF-16LE BOM 编码的无窗引导脚本 `.runtime/launch-watch.vbs`，优先注册当前用户任务计划程序 `DongxuelianAntigravityTheme`（插电/电池下均可长驻），除登录触发外还附带**每 3 分钟一次的看门狗复查**：守护进程若因关机/重启被中途取消、异常退出或被误结束，最迟约 3 分钟内自动复活（守护进程存活时引导脚本直接退出，不会额外启动 `node`）；若环境受限，自动回退写入注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`。
   - **macOS**：写入并加载 `~/Library/LaunchAgents/io.dongxuelian.antigravity-theme.plist`。
   - **Linux**：写入 `$XDG_CONFIG_HOME/autostart/antigravity-theme-dongxuelian.desktop`。
 

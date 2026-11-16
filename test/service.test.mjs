@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   cleanupExitedPidFile,
+  createDaemonLogger,
   isNodeProcessPid,
   parseCliArgs,
   readLiveWatcherPid,
@@ -238,6 +239,7 @@ function createWindowsExecMock({ failTaskRegister = false, onStartTask = null } 
           throw new Error('Access is denied (simulated)');
         }
         state.taskRegistered = true;
+        state.taskScript = script;
         return { stdout: '', stderr: '' };
       }
       if (script.includes('Start-ScheduledTask')) {
@@ -339,6 +341,11 @@ test('脚本模板生成函数正确处理中文路径与特殊字符转义', ()
   assert.ok(vbs.includes('""--daemon""'));
   assert.ok(vbs.includes('shell.Run "'));
   assert.ok(vbs.includes(', 0, False'));
+  // 看门狗快速路径：PID 存活且命令行包含 watch.js 时直接退出，不重复拉起
+  assert.ok(vbs.includes('pidFile = "E:\\AGY_workspace\\主题开发\\.watch.pid"'));
+  assert.ok(vbs.includes("CommandLine LIKE '%watch.js%'"));
+  assert.ok(vbs.includes('WScript.Quit 0'));
+  assert.ok(vbs.indexOf('WScript.Quit 0') < vbs.indexOf('shell.Run "'));
 
   const plist = buildMacLaunchAgentPlist({
     label: MACOS_LAUNCHD_LABEL,
@@ -384,6 +391,14 @@ test('rotateLogIfNeeded 正确轮转超限日志，--if-not-running 不重复启
     rotateLogIfNeeded(logFile, 100);
     assert.equal(existsSync(logFile), false);
     assert.equal(readFileSync(rotatedFile, 'utf8'), 'B'.repeat(150));
+
+    // createDaemonLogger 常驻运行期间超过 maxBytes 也应自动轮转
+    const daemonLogger = createDaemonLogger(logFile, { maxBytes: 80 });
+    daemonLogger.log('line-1-' + 'X'.repeat(60));
+    daemonLogger.log('line-2-' + 'Y'.repeat(60));
+    assert.equal(existsSync(rotatedFile), true);
+    assert.ok(readFileSync(rotatedFile, 'utf8').includes('line-1-'));
+    assert.ok(readFileSync(logFile, 'utf8').includes('line-2-'));
 
     // --if-not-running 验证：当 pidFile 指向另一个存活 Node 进程时，watchLoop 立即跳过并安全返回
     dummyChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
@@ -481,6 +496,11 @@ test('Windows 主路径（任务计划程序）：installTheme -> getInstallStat
     assert.equal(installRes.installed, true);
     assert.ok(Number.isInteger(installedPid) && installedPid > 0);
     assert.equal(mockExec.state.taskRegistered, true);
+    // 任务计划同时注册登录触发器与每 3 分钟无限期复查的看门狗触发器
+    assert.ok(mockExec.state.taskScript.includes('-AtLogOn'));
+    assert.ok(mockExec.state.taskScript.includes('-RepetitionInterval (New-TimeSpan -Minutes 3)'));
+    assert.ok(mockExec.state.taskScript.includes('-Trigger @($trigger, $watchdog)'));
+    assert.ok(mockExec.state.taskScript.includes('-MultipleInstances IgnoreNew'));
     assert.equal(installRes.autostart.method, 'windows-task-scheduler');
     assert.equal(existsSync(join(tempRoot, '.runtime', 'install-state.json')), true);
 
