@@ -100,7 +100,11 @@ export function loadI18nDictionary({ rootDir = DEFAULT_ROOT, overridePath } = {}
 
   if (typeof overridePath === 'string' && overridePath.trim()) {
     const resolvedOverride = resolve(process.cwd(), overridePath.trim());
-    if (resolvedOverride !== defaultOverridePath) {
+    const isSameFile =
+      process.platform === 'win32'
+        ? resolvedOverride.toLowerCase() === defaultOverridePath.toLowerCase()
+        : resolvedOverride === defaultOverridePath;
+    if (!isSameFile) {
       applyOverrideFile(resolvedOverride, true, '指定汉化覆盖词典');
     } else if (!existsSync(resolvedOverride)) {
       throw new Error(`未找到指定汉化覆盖词典：${resolvedOverride}`);

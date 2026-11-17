@@ -2,6 +2,32 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createI18nController, restoreI18nDom } from './i18n.js';
+import { MiniWebSocket, httpGetJson } from './net.js';
+
+/**
+ * 判断页面 URL 是否属于 Antigravity 自身界面（而非内置浏览器打开的外部网站）。
+ * - Antigravity 2.x 桌面端：`https://127.0.0.1:<端口>/...`（本机回环 HTTPS）
+ * - VS Code 系 Antigravity IDE：`vscode-file://vscode-app/...`
+ * 该函数零外部依赖，会被 `.toString()` 序列化注入页面做二次防护。
+ * @param {string} rawUrl
+ * @returns {boolean}
+ */
+export function isAntigravityAppUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl || ''));
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === 'vscode-file:') {
+    return parsed.hostname === 'vscode-app';
+  }
+  if (parsed.protocol !== 'https:') {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  return host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '::1';
+}
 
 /**
  * 根据操作系统与环境变量推导 Antigravity 的 `DevToolsActivePort` 路径。
@@ -40,6 +66,59 @@ export function validatePort(value) {
   return port;
 }
 
+async function fetchCdpJson(url, label, { fetchImpl, timeoutMs = 2000 } = {}) {
+  if (typeof fetchImpl === 'function') {
+    // 兼容测试或调用方显式注入的 fetch 实现
+    let response;
+    try {
+      response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err) {
+      throw new Error(`无法连接本地 CDP 接口 ${url}：${err.message}`);
+    }
+    if (!response.ok) {
+      throw new Error(`CDP ${label} 返回异常状态码：${response.status}`);
+    }
+    return response.json();
+  }
+  try {
+    return await httpGetJson(url, { timeoutMs });
+  } catch (err) {
+    throw new Error(`无法连接本地 CDP 接口 ${url}：${err.message}`);
+  }
+}
+
+/**
+ * 从 `DevToolsActivePort` 文件或显式参数读取调试端口与 Browser 级 WebSocket 路径。
+ * @param {string} [portFile]
+ * @param {object} [options]
+ * @param {number|string} [options.port]
+ * @returns {{ port: number, browserWsPath: string }}
+ */
+export function readBrowserEndpoint(portFile = getPortFilePath(), options = {}) {
+  if (options?.port !== undefined && options?.port !== null) {
+    return {
+      port: validatePort(options.port),
+      browserWsPath: '/devtools/browser',
+    };
+  }
+  if (!existsSync(portFile)) {
+    throw new Error(
+      `未找到 DevToolsActivePort 文件：${portFile}。请确认 Antigravity 桌面端已启动，或通过 --port <端口> 手动指定。`,
+    );
+  }
+  const raw = readFileSync(portFile, 'utf8');
+  const lines = raw.split(/\r?\n/);
+  const firstLine = lines[0]?.trim();
+  if (!firstLine) {
+    throw new Error(`DevToolsActivePort 文件为空：${portFile}`);
+  }
+  const secondLine = lines[1]?.trim() || '';
+  return {
+    port: validatePort(firstLine),
+    browserWsPath: secondLine.startsWith('/') ? secondLine : '/devtools/browser',
+  };
+}
+
 /**
  * 从 `DevToolsActivePort` 文件或显式参数读取 CDP 调试端口。
  * @param {string} [portFile]
@@ -48,20 +127,27 @@ export function validatePort(value) {
  * @returns {number}
  */
 export function readPort(portFile = getPortFilePath(), options = {}) {
-  if (options?.port !== undefined && options?.port !== null) {
-    return validatePort(options.port);
-  }
-  if (!existsSync(portFile)) {
-    throw new Error(
-      `未找到 DevToolsActivePort 文件：${portFile}。请确认 Antigravity 桌面端已启动，或通过 --port <端口> 手动指定。`,
-    );
-  }
-  const raw = readFileSync(portFile, 'utf8');
-  const firstLine = raw.split(/\r?\n/, 1)[0]?.trim();
-  if (!firstLine) {
-    throw new Error(`DevToolsActivePort 文件为空：${portFile}`);
-  }
-  return validatePort(firstLine);
+  return readBrowserEndpoint(portFile, options).port;
+}
+
+/**
+ * 当仅知道端口号且缺少 Browser UUID 路径时，通过 `/json/version` 查询真实 Browser WebSocket URL。
+ * @param {number} port
+ * @param {object} [options]
+ * @param {typeof fetch} [options.fetchImpl]
+ * @param {number} [options.timeoutMs]
+ * @returns {Promise<string|null>}
+ */
+export async function fetchBrowserWsUrl(port, { fetchImpl, timeoutMs = 2000 } = {}) {
+  const validPort = validatePort(port);
+  const info = await fetchCdpJson(
+    `http://127.0.0.1:${validPort}/json/version`,
+    '/json/version',
+    { fetchImpl, timeoutMs },
+  );
+  return typeof info?.webSocketDebuggerUrl === 'string' && info.webSocketDebuggerUrl
+    ? info.webSocketDebuggerUrl
+    : null;
 }
 
 /**
@@ -72,19 +158,10 @@ export function readPort(portFile = getPortFilePath(), options = {}) {
  * @param {number} [options.timeoutMs]
  * @returns {Promise<Array<{id: string, type: string, title?: string, url?: string, webSocketDebuggerUrl: string}>>}
  */
-export async function listPages(port, { fetchImpl = fetch, timeoutMs = 2000 } = {}) {
+export async function listPages(port, { fetchImpl, timeoutMs = 2000 } = {}) {
   const validPort = validatePort(port);
   const url = `http://127.0.0.1:${validPort}/json/list`;
-  let response;
-  try {
-    response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
-  } catch (err) {
-    throw new Error(`无法连接本地 CDP 接口 ${url}：${err.message}`);
-  }
-  if (!response.ok) {
-    throw new Error(`CDP /json/list 返回异常状态码：${response.status}`);
-  }
-  const list = await response.json();
+  const list = await fetchCdpJson(url, '/json/list', { fetchImpl, timeoutMs });
   if (!Array.isArray(list)) {
     throw new Error('CDP /json/list 返回格式不是数组');
   }
@@ -95,8 +172,8 @@ export async function listPages(port, { fetchImpl = fetch, timeoutMs = 2000 } = 
     if (typeof item.webSocketDebuggerUrl !== 'string' || !item.webSocketDebuggerUrl) {
       return false;
     }
-    const pageUrl = String(item.url || '');
-    return !pageUrl.startsWith('devtools://') && !pageUrl.startsWith('data:');
+    // 只保留 Antigravity 自身界面，排除内置浏览器中的外部网站、about:blank、devtools 等
+    return isAntigravityAppUrl(item.url);
   });
 }
 
@@ -126,9 +203,9 @@ export class CdpSession {
    * @param {typeof WebSocket} [options.WebSocketImpl]
    * @param {number} [options.timeoutMs]
    */
-  constructor(wsUrl, { WebSocketImpl = globalThis.WebSocket, timeoutMs = 5000 } = {}) {
+  constructor(wsUrl, { WebSocketImpl = MiniWebSocket, timeoutMs = 5000 } = {}) {
     if (typeof WebSocketImpl !== 'function') {
-      throw new Error('当前 Node 运行时缺少内置 WebSocket，请升级至 Node.js >= 22');
+      throw new Error('WebSocketImpl 必须是 WebSocket 构造函数');
     }
     this.wsUrl = wsUrl;
     this.WebSocketImpl = WebSocketImpl;
@@ -212,6 +289,10 @@ export class CdpSession {
     let payload;
     try {
       const text = await decodeWsData(rawData);
+      // 无人订阅 CDP 事件时直接丢弃事件帧，省去 JSON 解析开销（响应帧以 {"id" 开头）
+      if (text.startsWith('{"method"') && !this.#hasEventListeners()) {
+        return;
+      }
       payload = JSON.parse(text);
     } catch {
       return;
@@ -238,6 +319,15 @@ export class CdpSession {
       this.#emit(payload.method, payload.params ?? {});
       this.#emit('*', { method: payload.method, params: payload.params ?? {} });
     }
+  }
+
+  #hasEventListeners() {
+    for (const [name, handlers] of this.listeners) {
+      if (name !== 'close' && handlers.size > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   #emit(eventName, detail) {
@@ -410,6 +500,26 @@ export function buildInjectScript(
   };
 
   return `(() => {
+  const isAntigravityAppUrl = ${isAntigravityAppUrl.toString()};
+  // 二次防护：仅在 Antigravity 自身界面的顶层文档生效；
+  // 页面导航到外部网站或 iframe 中触发 document-start 注入时直接跳过
+  try {
+    if (typeof window === 'object' && window && window.top && window.top !== window) {
+      return { injected: false, skipped: 'subframe' };
+    }
+  } catch {
+    return { injected: false, skipped: 'subframe' };
+  }
+  if (
+    typeof location === 'object' &&
+    location &&
+    typeof location.href === 'string' &&
+    location.href &&
+    !isAntigravityAppUrl(location.href)
+  ) {
+    return { injected: false, skipped: 'foreign-url' };
+  }
+
   const CFG = ${JSON.stringify(config)};
   const cleanupDxlDom = ${cleanupDxlDom.toString()};
   const restoreI18nDom = ${restoreI18nDom.toString()};

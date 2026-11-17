@@ -9,6 +9,7 @@ import {
   REMOVE_EXPRESSION,
   buildInjectScript,
   getPortFilePath,
+  isAntigravityAppUrl,
   listPages,
   readPort,
 } from '../src/cdp.js';
@@ -262,7 +263,7 @@ test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、rem
   writeFileSync(portFile, `${server.port}\n`, 'utf8');
 
   try {
-    server.addPage({ id: 'main-win', title: 'Antigravity', url: 'https://antigravity.local/main' });
+    server.addPage({ id: 'main-win', title: 'Antigravity', url: 'https://127.0.0.1:50000/c/main' });
     server.setRawTargets([
       {
         id: 'devtools-win',
@@ -271,9 +272,22 @@ test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、rem
         webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/devtools/page/devtools-win`,
       },
       {
+        id: 'ext-web',
+        type: 'page',
+        title: '中国教育考试网',
+        url: 'https://cet.neea.edu.cn/',
+        webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/devtools/page/ext-web`,
+      },
+      {
+        id: 'blank-tab',
+        type: 'page',
+        url: 'about:blank',
+        webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/devtools/page/blank-tab`,
+      },
+      {
         id: 'bg-worker',
         type: 'background_page',
-        url: 'https://antigravity.local/bg',
+        url: 'https://127.0.0.1:50000/c/bg',
         webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/devtools/page/bg-worker`,
       },
     ]);
@@ -290,11 +304,10 @@ test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、rem
     assert.equal(injectRes.results[0].evalResult.injected, true);
     assert.equal(server.getPageState('main-win').docScripts.size, 1);
 
-    // 2. startWatch：挂载已有窗口、追踪新开窗口、热重载 CSS
+    // 2. startWatch：挂载已有窗口、凭 Target.targetCreated 事件自动追踪新开窗口（零轮询）、热重载 CSS
     const watcher = await startWatch({
       portFile,
       pidFile,
-      pollIntervalMs: 5000,
       logger: silentLogger,
     });
     try {
@@ -302,8 +315,11 @@ test('Mock CDP 端到端测试：injectOnce、watch 自动挂载/热重载、rem
       assert.equal(watcher.getAttachedCount(), 1);
 
       server.addPage({ id: 'aux-win', title: 'Antigravity Second Window' });
-      const countAfterNew = await watcher.syncNow();
-      assert.equal(countAfterNew, 2, '应自动发现并注入新窗口');
+      const attachDeadline = Date.now() + 500;
+      while (watcher.getAttachedCount() < 2 && Date.now() < attachDeadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.equal(watcher.getAttachedCount(), 2, '应无需手动 syncNow，仅凭 CDP Target 事件推送自动发现并注入新窗口');
 
       const reloaded = await watcher.reinjectNow();
       assert.equal(reloaded, 2, '应向全部已挂载页面热重载样式');
@@ -504,5 +520,79 @@ test('startWatch 监听目录变化支持新建 user/i18n.override.json 热重�
     }
     await server.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('isAntigravityAppUrl 与页面端二次防护严格排除外部网页与 iframe，且单页失败不影响其他页面', async () => {
+  // 1. URL 白名单判定
+  assert.equal(isAntigravityAppUrl('https://127.0.0.1:63587/c/123?project=abc'), true);
+  assert.equal(isAntigravityAppUrl('https://localhost:8080/'), true);
+  assert.equal(isAntigravityAppUrl('https://[::1]:8443/app'), true);
+  assert.equal(isAntigravityAppUrl('vscode-file://vscode-app/workbench/workbench.html'), true);
+
+  assert.equal(isAntigravityAppUrl('https://cet.neea.edu.cn/'), false);
+  assert.equal(isAntigravityAppUrl('http://127.0.0.1:8080/'), false);
+  assert.equal(isAntigravityAppUrl('about:blank'), false);
+  assert.equal(isAntigravityAppUrl('devtools://devtools/bundled/inspector.html'), false);
+  assert.equal(isAntigravityAppUrl('data:text/html,hello'), false);
+
+  // 2. 页面端脚本二次防护（外部 URL 与 subframe）
+  const css = buildThemeCss({ rootDir: ROOT });
+  const script = buildInjectScript(css, { avatar: false, shift: true, i18n: false, version: '0.1.0' });
+
+  const foreignPage = createMockAntigravityPage({ light: true });
+  foreignPage.evaluate('globalThis.location = { href: "https://cet.neea.edu.cn/" };');
+  const foreignRes = foreignPage.evaluate(script);
+  assert.equal(foreignRes.injected, false);
+  assert.equal(foreignRes.skipped, 'foreign-url');
+  assert.equal(foreignPage.document.getElementById('dxl-antigravity-theme'), null);
+
+  const iframePage = createMockAntigravityPage({ light: true });
+  iframePage.evaluate('window.top = {}; globalThis.location = { href: "https://127.0.0.1:63587/c/1" };');
+  const iframeRes = iframePage.evaluate(script);
+  assert.equal(iframeRes.injected, false);
+  assert.equal(iframeRes.skipped, 'subframe');
+  assert.equal(iframePage.document.getElementById('dxl-antigravity-theme'), null);
+
+  // 3. 单页故障容错：其中一个 target WebSocket 连接失败时，其余页面仍能正常 injectOnce / removeOnce
+  const domMap = new Map();
+  const server = await startMockCdpServer({
+    onEvaluate: (pageState, expression) => {
+      if (!domMap.has(pageState.id)) {
+        domMap.set(pageState.id, createMockAntigravityPage({ light: true }));
+      }
+      return domMap.get(pageState.id).evaluate(expression);
+    },
+  });
+  try {
+    server.addPage({ id: 'good-win', title: 'Antigravity Good' });
+    server.setRawTargets([
+      {
+        id: 'dead-win',
+        type: 'page',
+        title: 'Broken Target',
+        url: `https://127.0.0.1:${server.port}/c/dead`,
+        webSocketDebuggerUrl: `ws://127.0.0.1:${server.port}/devtools/page/nonexistent`,
+      },
+    ]);
+
+    const warnings = [];
+    const logger = { log: () => {}, warn: (m) => warnings.push(m), error: () => {} };
+
+    const injectRes = await injectOnce({ port: server.port, timeoutMs: 500, logger });
+    assert.equal(injectRes.injectedCount, 1);
+    assert.equal(injectRes.failures.length, 1);
+    assert.equal(injectRes.failures[0].id, 'dead-win');
+    assert.ok(domMap.get('good-win').document.getElementById('dxl-antigravity-theme'));
+
+    // 必须显式指定隔离的 pidFile，否则会读取仓库根目录 .watch.pid 并误杀本机正在运行的真实守护进程
+    const isolatedPidFile = join(tmpdir(), `dxl-test-${process.pid}-${Date.now()}.pid`);
+    const removeRes = await removeOnce({ port: server.port, timeoutMs: 500, logger, pidFile: isolatedPidFile });
+    assert.equal(removeRes.removedCount, 1);
+    assert.equal(removeRes.failures.length, 1);
+    assert.equal(domMap.get('good-win').document.getElementById('dxl-antigravity-theme'), null);
+    assert.ok(warnings.length >= 2);
+  } finally {
+    await server.close();
   }
 });

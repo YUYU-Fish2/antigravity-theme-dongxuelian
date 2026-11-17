@@ -21,8 +21,11 @@ import {
   CdpSession,
   REMOVE_EXPRESSION,
   buildInjectScript,
+  fetchBrowserWsUrl,
   getPortFilePath,
+  isAntigravityAppUrl,
   listPages,
+  readBrowserEndpoint,
   readPort,
   validatePort,
 } from './cdp.js';
@@ -416,6 +419,8 @@ export function tryStopWatcherByPidFile(pidFile, logger) {
     return { signaled: false, pid: null };
   }
   let signaled = false;
+  // 主动停止前先清理 PID 文件，通知外层 VBScript 守候进程正常退出而不是触发崩溃复活
+  unlinkQuietly(pidFile);
   try {
     if (pid !== process.pid) {
       process.kill(pid, 'SIGTERM');
@@ -577,7 +582,6 @@ export async function startWatch(options = {}) {
     shift = true,
     i18n = true,
     i18nOverride,
-    pollIntervalMs = 2000,
     cssDebounceMs = 150,
     fetchImpl,
     WebSocketImpl,
@@ -593,11 +597,18 @@ export async function startWatch(options = {}) {
   let payloadVersion = 0;
   const attached = new Map();
   let stopped = false;
-  let syncing = false;
+  let browserSession = null;
+  let browserEndpointKey = null;
+  let syncInFlight = null;
+  let syncQueued = false;
+  let lastSyncConnected = false;
   let reinjectInFlight = null;
   let reinjectQueued = false;
   let cssTimer = null;
-  let pollTimer = null;
+  let portTimer = null;
+  let retryTimer = null;
+  let reconnectTimer = null;
+  const PORT_READY_BACKOFF_MS = [150, 400, 1000];
   const fsWatchers = [];
   let waitErrorLogged = false;
 
@@ -667,15 +678,99 @@ export async function startWatch(options = {}) {
     return reinjectInFlight;
   };
 
-  const syncNow = async () => {
-    if (stopped || syncing) {
-      return attached.size;
+  let syncNow;
+
+  const ensureBrowserDiscovery = async (targetPort, browserWsPath) => {
+    const endpointKey = `${targetPort}${browserWsPath}`;
+    if (stopped || (browserSession && !browserSession.closed && browserEndpointKey === endpointKey)) {
+      return;
     }
-    syncing = true;
+    if (browserSession) {
+      const oldSession = browserSession;
+      browserSession = null;
+      browserEndpointKey = null;
+      await oldSession.close().catch(() => {});
+    }
+
+    const bindAndDiscover = async (wsUrl) => {
+      const session = new CdpSession(wsUrl, { WebSocketImpl, timeoutMs });
+      let discoveryReady = false;
+      const onTargetUpdate = (detail) => {
+        if (stopped) return;
+        const info = detail?.targetInfo;
+        if (info?.type === 'page' && isAntigravityAppUrl(info.url) && !attached.has(info.targetId)) {
+          void syncNow();
+        }
+      };
+      session.on('Target.targetCreated', onTargetUpdate);
+      session.on('Target.targetInfoChanged', onTargetUpdate);
+      session.on('Target.targetDestroyed', (detail) => {
+        const targetId = detail?.targetId;
+        const entry = targetId ? attached.get(targetId) : null;
+        if (entry) {
+          attached.delete(targetId);
+          void entry.session.close().catch(() => {});
+        }
+      });
+      session.on('close', () => {
+        if (browserSession === session) {
+          browserSession = null;
+          browserEndpointKey = null;
+        }
+        // 已建立长连接后断开（例如客户端瞬间重启），安排一次单次重连探测，不使用周期轮询
+        if (discoveryReady && !stopped) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            if (!stopped) void syncNow();
+          }, 250);
+        }
+      });
+
+      try {
+        await session.connect();
+        await session.send('Target.setDiscoverTargets', { discover: true });
+        discoveryReady = true;
+        if (stopped) {
+          await session.close().catch(() => {});
+          return null;
+        }
+        return session;
+      } catch (err) {
+        await session.close().catch(() => {});
+        throw err;
+      }
+    };
+
+    let session = null;
+    try {
+      session = await bindAndDiscover(`ws://127.0.0.1:${targetPort}${browserWsPath}`);
+    } catch (err) {
+      // 显式 --port 或单行端口文件缺少 Browser UUID 时，退回 /json/version 查询一次完整地址
+      if (browserWsPath === '/devtools/browser') {
+        const resolvedUrl = await fetchBrowserWsUrl(targetPort, { fetchImpl, timeoutMs }).catch(() => null);
+        if (resolvedUrl && !stopped) {
+          session = await bindAndDiscover(resolvedUrl);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    if (session && !stopped) {
+      browserSession = session;
+      browserEndpointKey = endpointKey;
+    }
+  };
+
+  const runSyncPass = async () => {
     let needsCatchUp = false;
     try {
-      const targetPort = readPort(portFile, { port });
+      const { port: targetPort, browserWsPath } = readBrowserEndpoint(portFile, { port });
       const pages = await listPages(targetPort, { fetchImpl, timeoutMs });
+      lastSyncConnected = true;
       waitErrorLogged = false;
 
       const unattached = pages.filter((page) => !attached.has(page.id));
@@ -687,7 +782,7 @@ export async function startWatch(options = {}) {
             payload = compilePayload();
           } catch (err) {
             logger.warn(`[冬雪莲] 运行时载荷编译失败：${err.message}`);
-            return attached.size;
+            return needsCatchUp;
           }
         }
         const versionAtInject = payloadVersion;
@@ -721,18 +816,74 @@ export async function startWatch(options = {}) {
           }
         }
       }
+      if (!stopped) {
+        await ensureBrowserDiscovery(targetPort, browserWsPath).catch(() => {});
+      }
     } catch (err) {
+      lastSyncConnected = false;
       if (!waitErrorLogged) {
         waitErrorLogged = true;
         logger.log(`[冬雪莲] 等待 Antigravity CDP 就绪：${err.message}`);
       }
-    } finally {
-      syncing = false;
     }
-    if (needsCatchUp && !stopped) {
-      await reinjectNow();
+    return needsCatchUp;
+  };
+
+  syncNow = async () => {
+    if (stopped) {
+      return attached.size;
     }
-    return attached.size;
+    if (syncInFlight) {
+      syncQueued = true;
+      return syncInFlight;
+    }
+    syncInFlight = (async () => {
+      let needsCatchUp = false;
+      do {
+        syncQueued = false;
+        if (await runSyncPass()) {
+          needsCatchUp = true;
+        }
+      } while (syncQueued && !stopped);
+      if (needsCatchUp && !stopped) {
+        await reinjectNow();
+      }
+      return attached.size;
+    })().finally(() => {
+      syncInFlight = null;
+    });
+    return syncInFlight;
+  };
+
+  const syncPortWithBackoff = async (attempt = 0) => {
+    if (stopped) return;
+    await syncNow();
+    if (!lastSyncConnected && !stopped && attempt < PORT_READY_BACKOFF_MS.length) {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void syncPortWithBackoff(attempt + 1);
+      }, PORT_READY_BACKOFF_MS[attempt]);
+    }
+  };
+
+  const registerDirWatcher = (dir, targetNames, onChange) => {
+    if (!existsSync(dir)) return;
+    try {
+      const watcher = watch(dir, (_eventType, filename) => {
+        if (stopped) return;
+        if (filename && targetNames && !targetNames.has(basename(String(filename)))) {
+          return;
+        }
+        onChange();
+      });
+      watcher.on?.('error', (err) => {
+        logger.warn(`[冬雪莲] 文件监听异常（${dir}）：${err.message}`);
+      });
+      fsWatchers.push(watcher);
+    } catch (err) {
+      logger.warn(`[冬雪莲] 启动文件监听失败（${dir}）：${err.message}`);
+    }
   };
 
   const watchCandidates = [join(resolvedRoot, 'src', 'theme.css')];
@@ -755,38 +906,35 @@ export async function startWatch(options = {}) {
     dirTargetsMap.get(dir).add(basename(targetPath));
   }
   for (const [dir, targetNames] of dirTargetsMap.entries()) {
-    if (!existsSync(dir)) continue;
-    try {
-      const watcher = watch(dir, (_eventType, filename) => {
-        if (stopped) return;
-        if (filename && !targetNames.has(basename(String(filename)))) {
-          return;
-        }
-        clearTimeout(cssTimer);
-        cssTimer = setTimeout(() => {
-          void reinjectNow();
-        }, cssDebounceMs);
-      });
-      watcher.on?.('error', (err) => {
-        logger.warn(`[冬雪莲] 文件监听异常（${dir}）：${err.message}`);
-      });
-      fsWatchers.push(watcher);
-    } catch (err) {
-      logger.warn(`[冬雪莲] 启动文件监听失败（${dir}）：${err.message}`);
-    }
+    registerDirWatcher(dir, targetNames, () => {
+      clearTimeout(cssTimer);
+      cssTimer = setTimeout(() => {
+        void reinjectNow();
+      }, cssDebounceMs);
+    });
   }
+
+  // 纯事件驱动监听 DevToolsActivePort：客户端未启动或未变更时不触发任何轮询请求
+  const resolvedPortFile = resolve(portFile);
+  registerDirWatcher(dirname(resolvedPortFile), new Set([basename(resolvedPortFile)]), () => {
+    clearTimeout(portTimer);
+    clearTimeout(retryTimer);
+    portTimer = setTimeout(() => {
+      portTimer = null;
+      void syncPortWithBackoff(0);
+    }, 80);
+  });
 
   await syncNow();
   initialPayload = null;
-  pollTimer = setInterval(() => {
-    void syncNow();
-  }, pollIntervalMs);
 
   const stop = async () => {
     if (stopped) return;
     stopped = true;
     clearTimeout(cssTimer);
-    clearInterval(pollTimer);
+    clearTimeout(portTimer);
+    clearTimeout(retryTimer);
+    clearTimeout(reconnectTimer);
     for (const watcher of fsWatchers) {
       try {
         watcher.close();
@@ -795,6 +943,11 @@ export async function startWatch(options = {}) {
       }
     }
     fsWatchers.length = 0;
+    if (browserSession) {
+      await browserSession.close().catch(() => {});
+      browserSession = null;
+      browserEndpointKey = null;
+    }
     for (const entry of attached.values()) {
       await entry.session.close().catch(() => {});
     }
@@ -852,7 +1005,7 @@ export async function watchLoop(options = {}) {
     } catch {
       // 忽略日志写入异常
     }
-    unlinkQuietly(pidFile);
+    // 故意保留 .watch.pid 以便外层阻塞守候进程识别非正常退出并自动拉起
     process.exit(1);
   };
   if (isDaemon) {

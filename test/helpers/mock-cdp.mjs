@@ -47,8 +47,19 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
   let extraRawTargets = [];
   let scriptSeq = 1;
   const activeSockets = new Set();
+  const browserSockets = new Set();
 
   const server = createServer((req, res) => {
+    if (req.url === '/json/version') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          Browser: 'MockAntigravity/1.0',
+          webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser`,
+        }),
+      );
+      return;
+    }
     if (req.url === '/json/list') {
       const list = [
         ...Array.from(pages.values()).map((entry) => ({
@@ -69,11 +80,12 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
   });
 
   server.on('upgrade', (req, socket) => {
+    const isBrowserWs = /^\/devtools\/browser(?:\/[^?]*)?(?:\?.*)?$/.test(req.url || '');
     const match = req.url?.match(/^\/devtools\/page\/([^/?]+)$/);
     const pageId = match ? match[1] : null;
     const pageState = pageId ? pages.get(pageId) : null;
     const key = req.headers['sec-websocket-key'];
-    if (!pageState || !key) {
+    if ((!isBrowserWs && !pageState) || !key) {
       socket.destroy();
       return;
     }
@@ -91,6 +103,9 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
     );
 
     activeSockets.add(socket);
+    if (isBrowserWs) {
+      browserSockets.add(socket);
+    }
     let rxBuf = Buffer.alloc(0);
     let fragments = [];
 
@@ -102,7 +117,9 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
         return;
       }
       const { id, method, params = {} } = msg;
-      pageState.commands.push({ method, params });
+      if (pageState) {
+        pageState.commands.push({ method, params });
+      }
 
       const reply = (result) => {
         sendWsText(socket, JSON.stringify({ id, result }));
@@ -111,6 +128,28 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
         sendWsText(socket, JSON.stringify({ id, error: { code, message } }));
       };
 
+      if (isBrowserWs && method === 'Target.setDiscoverTargets') {
+        reply({});
+        if (params.discover) {
+          for (const entry of [...pages.values(), ...extraRawTargets]) {
+            sendWsText(
+              socket,
+              JSON.stringify({
+                method: 'Target.targetCreated',
+                params: {
+                  targetInfo: {
+                    targetId: entry.id,
+                    type: entry.type,
+                    title: entry.title,
+                    url: entry.url,
+                  },
+                },
+              }),
+            );
+          }
+        }
+        return;
+      }
       if (method === 'Page.enable') {
         reply({});
         return;
@@ -206,6 +245,7 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
 
     socket.on('close', () => {
       activeSockets.delete(socket);
+      browserSockets.delete(socket);
     });
   });
 
@@ -215,7 +255,7 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
   const addr = server.address();
   const port = typeof addr === 'object' && addr ? addr.port : 0;
 
-  const addPage = ({ id, title = `Antigravity (${id})`, url = `https://antigravity.local/${id}`, type = 'page' }) => {
+  const addPage = ({ id, title = `Antigravity (${id})`, url = `https://127.0.0.1:${port}/c/${id}`, type = 'page' }) => {
     const state = {
       id,
       type,
@@ -226,6 +266,20 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
       docScripts: new Map(),
     };
     pages.set(id, state);
+    const eventText = JSON.stringify({
+      method: 'Target.targetCreated',
+      params: {
+        targetInfo: {
+          targetId: state.id,
+          type: state.type,
+          title: state.title,
+          url: state.url,
+        },
+      },
+    });
+    for (const sock of browserSockets) {
+      sendWsText(sock, eventText);
+    }
     return state;
   };
 
@@ -241,6 +295,7 @@ export async function startMockCdpServer({ onEvaluate } = {}) {
         socket.destroy();
       }
       activeSockets.clear();
+      browserSockets.clear();
       await new Promise((resolveClose) => {
         server.close(() => resolveClose());
       });

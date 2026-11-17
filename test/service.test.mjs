@@ -339,13 +339,15 @@ test('脚本模板生成函数正确处理中文路径与特殊字符转义', ()
   assert.ok(vbs.includes('""C:\\Program Files\\nodejs\\node.exe""'));
   assert.ok(vbs.includes('""E:\\AGY_workspace\\主题开发\\bin\\watch.js""'));
   assert.ok(vbs.includes('""--daemon""'));
-  assert.ok(vbs.includes('shell.Run "'));
-  assert.ok(vbs.includes(', 0, False'));
-  // 看门狗快速路径：PID 存活且命令行包含 watch.js 时直接退出，不重复拉起
+  assert.ok(vbs.includes('shell.Run("'));
+  assert.ok(vbs.includes(', 0, True'));
+  assert.ok(vbs.includes('If Not fso.FileExists(pidFile) Then WScript.Quit 0'));
+  assert.ok(vbs.includes('Loop'));
+  // 启动快速检查：PID 存活且命令行包含 watch.js 时直接退出，不重复拉起
   assert.ok(vbs.includes('pidFile = "E:\\AGY_workspace\\主题开发\\.watch.pid"'));
   assert.ok(vbs.includes("CommandLine LIKE '%watch.js%'"));
   assert.ok(vbs.includes('WScript.Quit 0'));
-  assert.ok(vbs.indexOf('WScript.Quit 0') < vbs.indexOf('shell.Run "'));
+  assert.ok(vbs.indexOf('WScript.Quit 0') < vbs.indexOf('shell.Run("'));
 
   const plist = buildMacLaunchAgentPlist({
     label: MACOS_LAUNCHD_LABEL,
@@ -496,10 +498,12 @@ test('Windows 主路径（任务计划程序）：installTheme -> getInstallStat
     assert.equal(installRes.installed, true);
     assert.ok(Number.isInteger(installedPid) && installedPid > 0);
     assert.equal(mockExec.state.taskRegistered, true);
-    // 任务计划同时注册登录触发器与每 3 分钟无限期复查的看门狗触发器
+    // 任务计划采用零轮询事件驱动：登录触发 + 系统关机/唤醒事件触发器 + 异常退出原生重启，不使用定时 RepetitionInterval
     assert.ok(mockExec.state.taskScript.includes('-AtLogOn'));
-    assert.ok(mockExec.state.taskScript.includes('-RepetitionInterval (New-TimeSpan -Minutes 3)'));
-    assert.ok(mockExec.state.taskScript.includes('-Trigger @($trigger, $watchdog)'));
+    assert.ok(mockExec.state.taskScript.includes('MSFT_TaskEventTrigger'));
+    assert.ok(mockExec.state.taskScript.includes('EventID=1074'));
+    assert.ok(mockExec.state.taskScript.includes('-RestartCount 999'));
+    assert.ok(!mockExec.state.taskScript.includes('-RepetitionInterval'));
     assert.ok(mockExec.state.taskScript.includes('-MultipleInstances IgnoreNew'));
     assert.equal(installRes.autostart.method, 'windows-task-scheduler');
     assert.equal(existsSync(join(tempRoot, '.runtime', 'install-state.json')), true);

@@ -27,8 +27,6 @@ import {
 const execFileAsync = promisify(execFile);
 
 export const WINDOWS_TASK_NAME = 'DongxuelianAntigravityTheme';
-/** Windows 任务计划看门狗复查间隔（分钟） */
-export const WINDOWS_WATCHDOG_INTERVAL_MINUTES = 3;
 export const WINDOWS_REG_KEY_PS = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 export const WINDOWS_REG_VALUE = 'DongxuelianAntigravityTheme';
 export const MACOS_LAUNCHD_LABEL = 'io.dongxuelian.antigravity-theme';
@@ -138,28 +136,39 @@ export function buildWindowsVbsScript({
   const vbsPid = String(pidFile).replaceAll('"', '""');
   return [
     'Option Explicit',
-    'Dim shell, fso, pidFile, pidText, ts, wmi, procs',
+    'Dim shell, fso, pidFile, exitCode',
     'Set shell = CreateObject("WScript.Shell")',
     'Set fso = CreateObject("Scripting.FileSystemObject")',
     `shell.CurrentDirectory = "${vbsDir}"`,
     `pidFile = "${vbsPid}"`,
-    // 看门狗快速路径：守护进程仍存活时直接退出，避免每次定时触发都拉起 node 进程
-    'On Error Resume Next',
-    'If fso.FileExists(pidFile) Then',
-    '  Set ts = fso.OpenTextFile(pidFile, 1)',
-    '  pidText = Trim(Replace(Replace(ts.ReadAll, vbCr, ""), vbLf, ""))',
-    '  ts.Close',
-    '  If Len(pidText) > 0 And IsNumeric(pidText) Then',
-    '    Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")',
-    `    Set procs = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE ProcessId = " & CLng(pidText) & " AND CommandLine LIKE '%watch.js%'")`,
-    '    If Err.Number = 0 Then',
-    '      If procs.Count > 0 Then WScript.Quit 0',
+    'Function IsWatcherAlive()',
+    '  Dim ts, pidText, wmi, procs',
+    '  IsWatcherAlive = False',
+    '  On Error Resume Next',
+    '  If fso.FileExists(pidFile) Then',
+    '    Set ts = fso.OpenTextFile(pidFile, 1)',
+    '    pidText = Trim(Replace(Replace(ts.ReadAll, vbCr, ""), vbLf, ""))',
+    '    ts.Close',
+    '    If Len(pidText) > 0 And IsNumeric(pidText) Then',
+    '      Set wmi = GetObject("winmgmts:\\\\.\\root\\cimv2")',
+    `      Set procs = wmi.ExecQuery("SELECT ProcessId FROM Win32_Process WHERE ProcessId = " & CLng(pidText) & " AND CommandLine LIKE '%watch.js%'")`,
+    '      If Err.Number = 0 Then',
+    '        If procs.Count > 0 Then IsWatcherAlive = True',
+    '      End If',
     '    End If',
     '  End If',
-    'End If',
-    'Err.Clear',
-    'On Error GoTo 0',
-    `shell.Run "${vbsCmd}", 0, False`,
+    '  Err.Clear',
+    '  On Error GoTo 0',
+    'End Function',
+    // 若守护进程已存活则直接退出，避免登录/系统事件触发重复拉起
+    'If IsWatcherAlive() Then WScript.Quit 0',
+    // 内核句柄阻塞等待（零 CPU 零轮询）：仅当 node 意外退出且 pidFile 仍存在时才在短暂冷却后复活
+    'Do',
+    `  exitCode = shell.Run("${vbsCmd}", 0, True)`,
+    '  If Not fso.FileExists(pidFile) Then WScript.Quit 0',
+    '  If IsWatcherAlive() Then WScript.Quit 0',
+    '  WScript.Sleep 1500',
+    'Loop',
     '',
   ].join('\r\n');
 }
@@ -326,12 +335,21 @@ async function registerAutostart({
     let method = 'windows-task-scheduler';
     const taskPs = [
       "$userId = if ($env:USERDOMAIN) { \"$env:USERDOMAIN\\$env:USERNAME\" } else { $env:USERNAME }",
+      `Stop-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -ErrorAction SilentlyContinue`,
       `$action = New-ScheduledTaskAction -Execute '${escapePsSingleQuote(launchExe)}' -Argument '${escapePsSingleQuote(launchArgs)}' -WorkingDirectory '${escapePsSingleQuote(rootDir)}'`,
       '$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId',
-      // 看门狗触发器：每 3 分钟无限期复查一次，守护进程被系统关机中断、异常退出或被结束后自动复活
-      `$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes ${WINDOWS_WATCHDOG_INTERVAL_MINUTES})`,
-      '$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -MultipleInstances IgnoreNew',
-      `Register-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -Action $action -Trigger @($trigger, $watchdog) -Settings $settings -Description 'Antigravity 冬雪莲主题后台守护' -Force | Out-Null`,
+      '$triggers = @($trigger)',
+      // 系统事件触发器（零定时轮询）：订阅关机/重启发起(1074)与电源唤醒(1/107)，取消关机或睡眠唤醒后延迟 15s 自动检查恢复
+      'try {',
+      '  $evtClass = Get-CimClass -Namespace Root/Microsoft/Windows/TaskScheduler -ClassName MSFT_TaskEventTrigger -ErrorAction Stop',
+      '  $eventTrigger = New-CimInstance -CimClass $evtClass -ClientOnly',
+      '  $eventTrigger.Enabled = $true',
+      "  $eventTrigger.Delay = 'PT15S'",
+      "  $eventTrigger.Subscription = '<QueryList><Query Id=\"0\" Path=\"System\"><Select Path=\"System\">*[System[(Provider[@Name=''User32''] and EventID=1074) or (Provider[@Name=''Microsoft-Windows-Power-Troubleshooter''] and EventID=1) or (Provider[@Name=''Microsoft-Windows-Kernel-Power''] and EventID=107)]]</Select></Query></QueryList>'",
+      '  $triggers = @($trigger, $eventTrigger)',
+      '} catch {}',
+      '$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)',
+      `Register-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -Action $action -Trigger $triggers -Settings $settings -Description 'Antigravity 冬雪莲主题后台守护' -Force | Out-Null`,
     ].join('\n');
 
     try {
@@ -428,6 +446,7 @@ async function unregisterAutostart({
     const taskPs = [
       `$t = Get-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -ErrorAction SilentlyContinue`,
       'if ($t) {',
+      `  Stop-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -ErrorAction SilentlyContinue`,
       `  Unregister-ScheduledTask -TaskName '${WINDOWS_TASK_NAME}' -Confirm:$false`,
       "  Write-Output 'TASK_REMOVED'",
       '}',

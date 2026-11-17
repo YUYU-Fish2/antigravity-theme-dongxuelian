@@ -88,9 +88,9 @@ npm run install-theme
 
 安装完成后，脚本会：
 - 自动校验全部主题资产、CSS 与汉化词典；
-- 在后台静默启动守护进程（每 2 秒轻量检测一次本地 CDP 端口，有新窗口或重登页面即自动重注，并监听本地样式/词典热重载）；
+- 在后台静默启动守护进程（基于 `fs.watch` 监听 `DevToolsActivePort` 变更与 CDP `Target` 事件推送实时追踪新窗口和客户端重启，平时零轮询、零唤醒，同时监听本地样式/词典热重载）；
 - 写入**当前用户级登录自启**：
-  - **Windows**：生成 UTF-16LE BOM 编码的无窗引导脚本 `.runtime/launch-watch.vbs`，优先注册当前用户任务计划程序 `DongxuelianAntigravityTheme`（插电/电池下均可长驻），除登录触发外还附带**每 3 分钟一次的看门狗复查**：守护进程若因关机/重启被中途取消、异常退出或被误结束，最迟约 3 分钟内自动复活（守护进程存活时引导脚本直接退出，不会额外启动 `node`）；若环境受限，自动回退写入注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`。
+  - **Windows**：生成 UTF-16LE BOM 编码的无窗引导脚本 `.runtime/launch-watch.vbs`（通过 `shell.Run(..., 0, True)` 阻塞守候子进程内核句柄，平时零 CPU 轮询；仅当守护进程非正常退出时约 1.5 秒内自动拉起），并注册当前用户任务计划程序 `DongxuelianAntigravityTheme`（插电/电池下均可长驻），除登录触发（`AtLogOn`）外还配置了原生故障重启（`-RestartCount 999`）与系统事件触发器（订阅 `User32 EventID 1074` 关机/重启与电源唤醒事件），无定时轮询；若环境受限，自动回退写入注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`。
   - **macOS**：写入并加载 `~/Library/LaunchAgents/io.dongxuelian.antigravity-theme.plist`。
   - **Linux**：写入 `$XDG_CONFIG_HOME/autostart/antigravity-theme-dongxuelian.desktop`。
 
@@ -198,14 +198,14 @@ Google Antigravity 桌面端目前未提供可改写主聊天区域与左侧边�
 <details>
 <summary><strong>2. 提示“未检测到运行中的 Antigravity / DevToolsActivePort 不存在”</strong></summary>
 
-请确认 Antigravity 桌面客户端已经启动。如果你在刚安装时还没开客户端也没关系——后台守护会自动等待，等会儿你启动 Antigravity 后约 2 秒内就会自动注入；也可运行 `npm run status` 查看实时状态。若通过自定义调试端口启动客户端，请追加 `-- --port <端口号>`。
+请确认 Antigravity 桌面客户端已经启动。如果你在刚安装时还没开客户端也没关系——后台守护会自动静默等待，等会儿你启动 Antigravity 写入 `DevToolsActivePort` 后即刻触发自动注入；也可运行 `npm run status` 查看实时状态。若通过自定义调试端口启动客户端，请追加 `-- --port <端口号>`。
 
 </details>
 
 <details>
-<summary><strong>3. 退出登录 / 切换账号后为什么会闪回一两秒原界面？</strong></summary>
+<summary><strong>3. 退出登录 / 切换账号后为什么会短暂闪回原界面？</strong></summary>
 
-Antigravity 在退出登录或切换账号时会在内部销毁旧窗口并新建新的 `WebContents` 页面。由于本项目不改写安装包的 `app.asar`，需要由后台守护进程在下一个 2 秒巡检周期内发现新页面并重新注入，短暂闪烁一两秒属于正常现象。
+Antigravity 在退出登录或切换账号时会在内部销毁旧窗口并新建新的 `WebContents` 页面。由于本项目不改写安装包的 `app.asar`，需要由后台守护进程接收到 CDP `Target` 事件推送后立即连接新页面并重新注入，瞬间闪烁属于正常现象。
 
 </details>
 

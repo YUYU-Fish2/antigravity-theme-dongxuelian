@@ -331,7 +331,7 @@ test('Mock CDP 端到端验证 --i18n-override 注入与热重载字典更新', 
   writeFileSync(overridePath, JSON.stringify({ 'New Conversation': '开始新对话' }), 'utf8');
 
   try {
-    server.addPage({ id: 'win-1', title: 'Antigravity', url: 'https://antigravity.local/1' });
+    server.addPage({ id: 'win-1', title: 'Antigravity', url: 'https://127.0.0.1:50000/c/1' });
     const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
 
     const injectRes = await injectOnce({ portFile, i18nOverride: overridePath, logger: silentLogger });
