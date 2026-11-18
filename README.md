@@ -2,12 +2,13 @@
 
 面向 **Google Antigravity 2.x** 桌面客户端的「冬雪莲涂鸦主题（暖纸白 + 灰蓝/靛蓝墨）」外部无损主题与界面简体中文汉化工具。视觉风格与响应式抱书构图移植自原生 DSH 主题项目 [`YUYU-Fish2/dsh-theme-dongxuelian`](https://github.com/YUYU-Fish2/dsh-theme-dongxuelian)（`0.1.0-preview.6`）。
 
-- **双模式注入（适配 Antigravity 2.33.0+）**：
-  - **安装包直注模式（推荐 2.33.0+）**：`patch-app` 直接向 `resources/app.asar` 注入主进程主题钩子（自动生成 `.dxl-backup` 备份），**免开启调试端口、零后台常驻进程**。
-  - **外部 CDP 模式（免改包）**：适合 `< 2.33.0` 或使用 `--remote-debugging-port=0` 启动时，不改写安装包、后台事件驱动热重载。
-- **零第三方依赖**：纯 `Node.js >= 22` 标准库实现（含纯内置 `asar` 解析/打包），克隆即可运行，无需 `npm install`。
-- **一次安装、永久生效**：后台静默守护 + 登录开机自启，自动应对**客户端重启 / 版本更新 / 账号退出重登 / 系统重启**。
-- **100% 可逆**：支持一键彻底卸载或切回深色模式自动还原。
+- **三模式注入（按需选用，首选 Sidecar 原生插件）**：
+  - **Antigravity 原生插件模式（最推荐，更新免重装）**：`install-plugin` 注册为 Antigravity 本地 Sidecar 插件并由客户端直接托管启停，不改写 `resources/app.asar`，并自动自愈桌面/开始菜单快捷方式的本地调试参数，**客户端大版本更新后自动继承、无需重装**。
+  - **安装包直注模式（免调试端口）**：`patch-app` 直接向 `resources/app.asar` 注入主进程钩子（自动生成 `.dxl-backup` 备份），无需开启调试端口、零后台子进程；客户端覆盖更新后重跑一次即可。
+  - **外部 CDP 守护模式**：不改安装包也不走插件体系，由操作系统登录自启守护并事件驱动热重载。
+- **零第三方依赖**：纯 `Node.js >= 22` 标准库实现（含纯内置 `asar` 解析/打包与 `.lnk` 快捷方式读写），克隆即可运行，无需 `npm install`。
+- **一次安装、永久生效**：自动应对**客户端重启 / 版本更新 / 账号退出重登 / 系统重启**。
+- **100% 可逆**：支持一键彻底卸载（还原未修改前的快捷方式或停止守护）或切回深色模式自动还原。
 
 ---
 
@@ -76,9 +77,21 @@
 
 ### 第二步：选择安装方式
 
-#### 方式 1：安装包直注（推荐，适配 Antigravity `>= 2.33.0`）
+#### 方式 1：Antigravity 原生 Sidecar 插件（最推荐，更新免重装）
 
-Antigravity 从 `2.33.0` 起出于安全考虑默认关闭 `DevToolsActivePort` 调试端口。若你直接从开始菜单/快捷方式启动客户端且不想额外开启调试端口，请使用安装包直注模式：
+参考 `Antigrative Dashboard` 的插件托管 + 快捷方式自愈架构，无需修改安装包，也无须自己在系统后台挂守望进程：
+
+1. 进入项目文件夹，**直接双击 [`install-plugin.bat`](install-plugin.bat)**（或终端执行 `npm run install-plugin`）。
+2. 安装器会自动完成：
+   - 将冬雪莲插件安装至 `~/.gemini/config/plugins/antigravity-theme-dongxuelian`（含 `plugin.json`、`sidecars/theme/sidecar.json` 与 `sidecars/theme/main.mjs` 入口），并在 `~/.gemini/config/config.json` 中启用插件；
+   - 自动检测并仅按需追加桌面 / 开始菜单快捷方式（Windows `.lnk`）或 Linux `.desktop` 启动器中的 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1`（若安装器更新/外部覆盖抹掉这些参数，Sidecar 启动或被唤醒时会自动自愈补回）；
+   - 记录「仅由本插件新增的参数」至 `launch-state.json`，卸载时不会误删其他插件（如 `Antigrative Dashboard`）已配置的启动参数。
+3. 首次安装后，**完全退出一次 Antigravity，再从桌面/开始菜单快捷方式重新打开**即可立即生效；此后每次启动或升级 Antigravity 都会由客户端自动拉起并注入，**无需因为客户端更新而重新安装**。
+   - **完整卸载插件**：双击 [`uninstall-plugin.bat`](uninstall-plugin.bat) 或执行 `npm run uninstall-plugin`（自动关闭配置、清除插件目录、安全还原仅由本插件添加的调试参数并清理已注入页面）。
+
+#### 方式 2：安装包直注（不开启调试端口）
+
+如果你完全不希望桌面快捷方式携带 `--remote-debugging-port=0` 参数、也不想运行 Sidecar 子进程，可使用安装包直注模式：
 
 1. **先完全退出 Antigravity 桌面客户端**（避免占用 `resources/app.asar`）。
 2. 双击 [`patch-app.bat`](patch-app.bat) 或执行：
@@ -90,11 +103,11 @@ Antigravity 从 `2.33.0` 起出于安全考虑默认关闭 `DevToolsActivePort` 
    - **后续客户端自动更新后**：由于新版覆盖了 `resources/app.asar`，退出客户端后再运行一次 `patch-app.bat`（或 `npm run patch-app`）即可重新写入并更新备份。
    - **完整还原安装包**：退出客户端后双击 [`unpatch-app.bat`](unpatch-app.bat) 或执行 `npm run unpatch-app`。
 
-#### 方式 2：外部 CDP 永久守护（免改包，需客户端开启调试端口）
+#### 方式 3：外部 CDP 永久守护（独立后台，适合热改源码）
 
-如果你仍在旧版 Antigravity（`< 2.33.0`）或通过 `--remote-debugging-port=0` 启动客户端并希望随时热重载 `src/theme.css` / `user/i18n.override.json`：
+如果你通过 `--remote-debugging-port=0` 启动客户端，并希望随时保存即热重载 `src/theme.css` / `user/i18n.override.json`：
 
-**Windows 用户（最推荐，免敲命令）：**
+**Windows 用户（免敲命令）：**
 1. 打开 Antigravity 桌面客户端（未启动也可，之后再打开会自动注入）。
 2. 进入项目文件夹，**直接双击 [`install.bat`](install.bat)** 即可（**无需以管理员身份运行**）。
 
@@ -122,11 +135,13 @@ Windows 用户可直接双击对应 `.bat` 文件，各平台均支持在项目�
 
 | 目的 | Windows 双击 | 命令行（项目目录内） | 说明 |
 | --- | --- | --- | --- |
-| **安装包直注（2.33.0+ 推荐）** | [`patch-app.bat`](patch-app.bat) | `npm run patch-app` | 直接写入 `resources/app.asar` 并备份，免调试端口免后台（需先退出客户端） |
+| **原生插件安装（推荐，更新免重装）** | [`install-plugin.bat`](install-plugin.bat) | `npm run install-plugin` | 注册为 Antigravity Sidecar 插件 + 自愈快捷方式调试参数，免改包免手动守护 |
+| **卸载原生插件** | [`uninstall-plugin.bat`](uninstall-plugin.bat) | `npm run uninstall-plugin` | 禁用并移除 `~/.gemini/config/plugins/antigravity-theme-dongxuelian`，仅撤回本插件添加的启动参数 |
+| **安装包直注（免调试端口）** | [`patch-app.bat`](patch-app.bat) | `npm run patch-app` | 直接写入 `resources/app.asar` 并备份，免调试端口免后台（需先退出客户端） |
 | **还原安装包** | [`unpatch-app.bat`](unpatch-app.bat) | `npm run unpatch-app` | 优先从 `app.asar.dxl-backup` 无损还原安装包（需先退出客户端） |
 | **CDP 一次永久安装** | [`install.bat`](install.bat) | `npm run install-theme` | 注册当前用户登录自启并启动 CDP 后台静默守护（需调试端口） |
-| **查看运行状态** | [`status.bat`](status.bat) | `npm run status` | 检查登录自启、后台守护 PID、CDP 端口与 `app.asar` 补丁状态 |
-| **一键彻底卸载** | [`uninstall.bat`](uninstall.bat) | `npm run uninstall-theme` | 清理登录自启、停止后台守护、还原当前页面并删除 `.runtime/` |
+| **查看运行状态** | [`status.bat`](status.bat) | `npm run status` | 检查原生插件、快捷方式调试参数、自启/后台守护、`app.asar` 补丁与 CDP 状态 |
+| **卸载独立 CDP 守护** | [`uninstall.bat`](uninstall.bat) | `npm run uninstall-theme` | 清理登录自启、停止后台守护、还原当前页面并删除 `.runtime/` |
 | 单次试用注入 | [`inject.bat`](inject.bat) | `npm run inject` | 仅对当前已打开窗口注入一次（不常驻后台，重启/重登后失效） |
 | 前台调试监听 | [`watch.bat`](watch.bat) | `npm run watch` | 在当前终端前台输出实时日志并支持热重载，按 `Ctrl+C` 退出 |
 | 临时移除界面样式 | [`remove.bat`](remove.bat) | `npm run remove` | 停掉守护并把已打开页面还原为原生外观（不删登录自启） |
@@ -182,13 +197,13 @@ npm run watch -- --port 9222 --i18n-override ./user/i18n.override.json
 - **插件名称**：**`Antigrative Dashboard`**（插件 ID：`antigravity-pulse`）
 - **视觉与汉化协同**：
   - 本主题提供标准的 `--background`、`--card`、`--popover`、`--foreground`、`--primary` 浅色设计令牌，`Antigrative Dashboard` 会自动跟随呈现为与纸面一致的暖白柔和卡片风格。
-  - 本仓库汉化引擎已在 [`src/i18n.js`](src/i18n.js) 排除区中跳过 `#ag-live-metrics-pill` 与 `#ag-live-metrics-tooltip`，不会干扰其自有的中英文切换与实时数值刷新。
+  - 本仓库汉化引擎已在 [`src/i18n.js`](src/i18n.js) 排除区中跳过旧版 `#ag-live-metrics-pill` / `#ag-live-metrics-tooltip` 以及新版（`v0.9.5+`）`[data-ag-pulse-bar]` / `[id^="ag-pulse-"]`（含 `#ag-pulse-status-bar`），不会干扰其自有的中英文切换与实时数值刷新。
 
 ---
 
 ## 工作原理与资源占用
 
-Google Antigravity 桌面端目前未提供可改写主聊天区域与左侧边栏皮肤的官方主题 API，因此本项目采用 **无损外部 CDP 运行时注入**：
+Google Antigravity 桌面端目前未提供可改写主聊天区域与左侧边栏皮肤的官方主题 API，因此本项目采用 **无损外部 CDP 运行时注入**（在原生插件模式下由 Antigravity 宿主通过 Sidecar 自动拉起 `sidecars/theme/main.mjs` 驱动注入，并通过 `fs.watch` 监听配置变化与快捷方式参数自愈，无需额外常驻轮询）：
 
 - **后台资源实测**：单 `node.exe` 进程在 Windows 上私有内存约 **35 MB**（工作集约 **59 MB**），稳态空闲时 CPU 占用基本为 **0%**。
 - **日志体积上限**：后台运行日志写入根目录 `watch.log`，超出 `512 KB` 自动轮转为 `watch.log.1`，客户端未运行期间不会刷屏写盘。
@@ -260,18 +275,21 @@ antigravity-theme-dongxuelian/
 │  └─ textures/web/paper.webp
 ├─ user/                      # 用户覆盖词典示例（实际 user/i18n.override.json 已由 git 忽略）
 │  └─ i18n.override.example.json
-├─ bin/                       # CLI 入口（install / uninstall / patch-app / unpatch-app / status / inject / watch / remove）
+├─ bin/                       # CLI 入口（install-plugin / uninstall-plugin / patch-app / unpatch-app / install / uninstall / status / inject / watch / remove）
 ├─ src/
 │  ├─ asar.js                 # 零依赖 Electron app.asar 解析/重打包、主进程钩子注入与备份还原
 │  ├─ assets.js               # 资源预算校验、Base64 Data URI 编码与 CSS 组装
 │  ├─ cdp.js                  # 零依赖 CDP 会话客户端与幂等页面注入/卸载脚本
 │  ├─ i18n.js                 # UI 汉化词典合并、TreeWalker 实时汉化与可逆还原引擎
+│  ├─ launch.js               # 零依赖桌面/开始菜单 .lnk 与 Linux .desktop 调试参数检测、自愈与安全撤销
 │  ├─ net.js                  # 零依赖本地 HTTP / WebSocket 轻量客户端
+│  ├─ plugin.js               # Antigravity 原生插件 Sidecar 安装、配置管理、状态面板与卸载
 │  ├─ runner.js               # injectOnce / startWatch / watchLoop / removeOnce / 日志轮转
 │  ├─ service.js              # 一次安装永久生效、开机自启（Win/macOS/Linux）、状态与卸载服务
 │  └─ theme.css               # Antigravity 浅色令牌、连续纸面与响应式抱书舞台样式
 ├─ scripts/check.mjs          # JS 语法、WebP 资产预算、汉化词典与 CSS 完整性静态校验
-├─ test/                      # 资产、ASAR 打包、汉化、CSS、守护进程自启与本地 Mock CDP 自动化测试
+├─ test/                      # 资产、ASAR 打包、Sidecar 插件与快捷方式、汉化、CSS、守护进程与 Mock CDP 测试
+├─ install-plugin.bat / uninstall-plugin.bat
 ├─ patch-app.bat / unpatch-app.bat
 ├─ install.bat / uninstall.bat / status.bat
 ├─ inject.bat / watch.bat / remove.bat

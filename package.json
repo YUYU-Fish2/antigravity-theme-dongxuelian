@@ -16,6 +16,8 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "install-plugin": "node bin/install-plugin.js",
+    "uninstall-plugin": "node bin/uninstall-plugin.js",
     "install-theme": "node bin/install.js",
     "uninstall-theme": "node bin/uninstall.js",
     "patch-app": "node bin/patch-app.js",

@@ -607,6 +607,8 @@ export async function startWatch(options = {}) {
     WebSocketImpl,
     timeoutMs = 5000,
     logger = console,
+    onSync,
+    onWaitError,
   } = options;
 
   const compilePayload = () =>
@@ -838,9 +840,11 @@ export async function startWatch(options = {}) {
       }
       if (!stopped) {
         await ensureBrowserDiscovery(targetPort, browserWsPath).catch(() => {});
+        onSync?.({ connected: true, attachedCount: attached.size, port: targetPort });
       }
     } catch (err) {
       lastSyncConnected = false;
+      onWaitError?.(err);
       if (!waitErrorLogged) {
         waitErrorLogged = true;
         logger.log(`[冬雪莲] 等待 Antigravity CDP 就绪：${err.message}`);

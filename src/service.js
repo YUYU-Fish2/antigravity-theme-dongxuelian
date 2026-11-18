@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { getAppAsarStatus } from './asar.js';
 import { getPortFilePath, listPages, readPort } from './cdp.js';
+import { getPluginStatus } from './plugin.js';
 import {
   cleanupExitedPidFile,
   isProcessAlive,
@@ -891,9 +892,33 @@ export async function getInstallStatus(options = {}) {
     timeoutMs: options.timeoutMs ?? 1500,
   });
   const appPatch = getAppAsarStatus({ appAsar: options.appAsar, platform, env, home });
+  const plugin = getPluginStatus({
+    platform,
+    env,
+    home,
+    pluginDir: options.pluginDir,
+    configFile: options.configFile,
+    dataDir: options.dataDir,
+  });
 
   if (!options.silent) {
     logger.log('[冬雪莲] 运行状态报告：');
+    logger.log(
+      `  - Antigravity 插件模式：${
+        plugin.installed
+          ? `${plugin.enabled ? '已启用' : '已禁用'} (v${plugin.version || '?'}, Sidecar 状态: ${plugin.integration?.state || '未启动'})`
+          : '未安装'
+      }`,
+    );
+    logger.log(
+      `  - 快捷方式调试参数：${
+        plugin.launch?.configured
+          ? `已配置 (${plugin.launch.entrypoints.length} 个桌面/开始菜单入口)`
+          : plugin.launch?.supported
+            ? '未配置'
+            : '当前平台需手动传参'
+      }`,
+    );
     logger.log(
       `  - 登录自动启动：${autostart.installed ? `已启用 (${autostart.method}: ${autostart.detail})` : '未安装'}`,
     );
@@ -918,5 +943,6 @@ export async function getInstallStatus(options = {}) {
     options: autostart.state?.options ?? null,
     cdp,
     appPatch,
+    plugin,
   };
 }
