@@ -18,6 +18,8 @@
   "scripts": {
     "install-theme": "node bin/install.js",
     "uninstall-theme": "node bin/uninstall.js",
+    "patch-app": "node bin/patch-app.js",
+    "unpatch-app": "node bin/unpatch-app.js",
     "status": "node bin/status.js",
     "inject": "node bin/inject.js",
     "watch": "node bin/watch.js",

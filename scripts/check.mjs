@@ -126,6 +126,8 @@ function assertPackageContract() {
     'remove',
     'install-theme',
     'uninstall-theme',
+    'patch-app',
+    'unpatch-app',
     'status',
     'test',
     'check',
@@ -143,6 +145,8 @@ function assertBatchWrappers() {
     ['remove.bat', 'bin\\remove.js'],
     ['install.bat', 'bin\\install.js'],
     ['uninstall.bat', 'bin\\uninstall.js'],
+    ['patch-app.bat', 'bin\\patch-app.js'],
+    ['unpatch-app.bat', 'bin\\unpatch-app.js'],
     ['status.bat', 'bin\\status.js'],
   ];
   for (const [batName, binTarget] of expected) {

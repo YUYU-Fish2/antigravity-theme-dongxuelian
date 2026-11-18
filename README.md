@@ -2,8 +2,10 @@
 
 面向 **Google Antigravity 2.x** 桌面客户端的「冬雪莲涂鸦主题（暖纸白 + 灰蓝/靛蓝墨）」外部无损主题与界面简体中文汉化工具。视觉风格与响应式抱书构图移植自原生 DSH 主题项目 [`YUYU-Fish2/dsh-theme-dongxuelian`](https://github.com/YUYU-Fish2/dsh-theme-dongxuelian)（`0.1.0-preview.6`）。
 
-- **零侵入 & 不改安装包**：不解包、不改写 `resources/app.asar`，也不修改 `~/.gemini/config/config.json`。
-- **零第三方依赖**：纯 `Node.js >= 22` 标准库实现，克隆即可运行，无需 `npm install`。
+- **双模式注入（适配 Antigravity 2.33.0+）**：
+  - **安装包直注模式（推荐 2.33.0+）**：`patch-app` 直接向 `resources/app.asar` 注入主进程主题钩子（自动生成 `.dxl-backup` 备份），**免开启调试端口、零后台常驻进程**。
+  - **外部 CDP 模式（免改包）**：适合 `< 2.33.0` 或使用 `--remote-debugging-port=0` 启动时，不改写安装包、后台事件驱动热重载。
+- **零第三方依赖**：纯 `Node.js >= 22` 标准库实现（含纯内置 `asar` 解析/打包），克隆即可运行，无需 `npm install`。
 - **一次安装、永久生效**：后台静默守护 + 登录开机自启，自动应对**客户端重启 / 版本更新 / 账号退出重登 / 系统重启**。
 - **100% 可逆**：支持一键彻底卸载或切回深色模式自动还原。
 
@@ -72,7 +74,25 @@
 
 > ⚠️ **注意**：永久安装模式下，开机自启与主题样式资源均直接读取当前目录，安装后请勿删除该文件夹。
 
-### 第二步：一键永久安装（只需执行一次）
+### 第二步：选择安装方式
+
+#### 方式 1：安装包直注（推荐，适配 Antigravity `>= 2.33.0`）
+
+Antigravity 从 `2.33.0` 起出于安全考虑默认关闭 `DevToolsActivePort` 调试端口。若你直接从开始菜单/快捷方式启动客户端且不想额外开启调试端口，请使用安装包直注模式：
+
+1. **先完全退出 Antigravity 桌面客户端**（避免占用 `resources/app.asar`）。
+2. 双击 [`patch-app.bat`](patch-app.bat) 或执行：
+   ```bash
+   cd /path/to/antigravity-theme-dongxuelian
+   npm run patch-app
+   ```
+3. 重新打开 Antigravity 即可立即生效。该模式**不需要开启 `remote-debugging-port`，也不需要任何后台常驻守护进程**，首次打补丁时会自动备份原始包为 `app.asar.dxl-backup`。
+   - **后续客户端自动更新后**：由于新版覆盖了 `resources/app.asar`，退出客户端后再运行一次 `patch-app.bat`（或 `npm run patch-app`）即可重新写入并更新备份。
+   - **完整还原安装包**：退出客户端后双击 [`unpatch-app.bat`](unpatch-app.bat) 或执行 `npm run unpatch-app`。
+
+#### 方式 2：外部 CDP 永久守护（免改包，需客户端开启调试端口）
+
+如果你仍在旧版 Antigravity（`< 2.33.0`）或通过 `--remote-debugging-port=0` 启动客户端并希望随时热重载 `src/theme.css` / `user/i18n.override.json`：
 
 **Windows 用户（最推荐，免敲命令）：**
 1. 打开 Antigravity 桌面客户端（未启动也可，之后再打开会自动注入）。
@@ -102,8 +122,10 @@ Windows 用户可直接双击对应 `.bat` 文件，各平台均支持在项目�
 
 | 目的 | Windows 双击 | 命令行（项目目录内） | 说明 |
 | --- | --- | --- | --- |
-| **一次永久安装** | [`install.bat`](install.bat) | `npm run install-theme` | 注册当前用户登录自启并启动后台静默守护（推荐） |
-| **查看运行状态** | [`status.bat`](status.bat) | `npm run status` | 检查登录自启、后台守护 PID 与 Antigravity CDP 就绪情况 |
+| **安装包直注（2.33.0+ 推荐）** | [`patch-app.bat`](patch-app.bat) | `npm run patch-app` | 直接写入 `resources/app.asar` 并备份，免调试端口免后台（需先退出客户端） |
+| **还原安装包** | [`unpatch-app.bat`](unpatch-app.bat) | `npm run unpatch-app` | 优先从 `app.asar.dxl-backup` 无损还原安装包（需先退出客户端） |
+| **CDP 一次永久安装** | [`install.bat`](install.bat) | `npm run install-theme` | 注册当前用户登录自启并启动 CDP 后台静默守护（需调试端口） |
+| **查看运行状态** | [`status.bat`](status.bat) | `npm run status` | 检查登录自启、后台守护 PID、CDP 端口与 `app.asar` 补丁状态 |
 | **一键彻底卸载** | [`uninstall.bat`](uninstall.bat) | `npm run uninstall-theme` | 清理登录自启、停止后台守护、还原当前页面并删除 `.runtime/` |
 | 单次试用注入 | [`inject.bat`](inject.bat) | `npm run inject` | 仅对当前已打开窗口注入一次（不常驻后台，重启/重登后失效） |
 | 前台调试监听 | [`watch.bat`](watch.bat) | `npm run watch` | 在当前终端前台输出实时日志并支持热重载，按 `Ctrl+C` 退出 |
@@ -138,6 +160,7 @@ Windows 用户可直接双击对应 `.bat` 文件，各平台均支持在项目�
 | `--no-shift` | 关闭 `>=1100px` 宽屏下对话/输入列的左移微调 |
 | `--no-i18n` | 关闭界面简体中文汉化（若已汉化则自动还原原始英文） |
 | `--i18n-override <路径>` | 加载额外的用户覆盖词典 JSON 文件（合并于 `user/i18n.override.json` 之后） |
+| `--app-asar <路径>` | 手动指定 Antigravity `resources/app.asar` 文件路径（用于 `patch-app` / `unpatch-app`） |
 | `--daemon` | 后台守护模式运行 `watch`，日志输出至 `watch.log`（由 `install-theme` 自动使用） |
 | `--if-not-running` | 若检测到已有存活守护进程则直接退出，防止重复拉起（供开机自启使用） |
 | `-h`, `--help` | 打印帮助信息 |
@@ -237,16 +260,19 @@ antigravity-theme-dongxuelian/
 │  └─ textures/web/paper.webp
 ├─ user/                      # 用户覆盖词典示例（实际 user/i18n.override.json 已由 git 忽略）
 │  └─ i18n.override.example.json
-├─ bin/                       # CLI 入口（install / uninstall / status / inject / watch / remove）
+├─ bin/                       # CLI 入口（install / uninstall / patch-app / unpatch-app / status / inject / watch / remove）
 ├─ src/
+│  ├─ asar.js                 # 零依赖 Electron app.asar 解析/重打包、主进程钩子注入与备份还原
 │  ├─ assets.js               # 资源预算校验、Base64 Data URI 编码与 CSS 组装
 │  ├─ cdp.js                  # 零依赖 CDP 会话客户端与幂等页面注入/卸载脚本
 │  ├─ i18n.js                 # UI 汉化词典合并、TreeWalker 实时汉化与可逆还原引擎
+│  ├─ net.js                  # 零依赖本地 HTTP / WebSocket 轻量客户端
 │  ├─ runner.js               # injectOnce / startWatch / watchLoop / removeOnce / 日志轮转
 │  ├─ service.js              # 一次安装永久生效、开机自启（Win/macOS/Linux）、状态与卸载服务
 │  └─ theme.css               # Antigravity 浅色令牌、连续纸面与响应式抱书舞台样式
 ├─ scripts/check.mjs          # JS 语法、WebP 资产预算、汉化词典与 CSS 完整性静态校验
-├─ test/                      # 资产、汉化、CSS、守护进程自启与本地 Mock CDP 自动化测试
+├─ test/                      # 资产、ASAR 打包、汉化、CSS、守护进程自启与本地 Mock CDP 自动化测试
+├─ patch-app.bat / unpatch-app.bat
 ├─ install.bat / uninstall.bat / status.bat
 ├─ inject.bat / watch.bat / remove.bat
 ├─ LICENSE

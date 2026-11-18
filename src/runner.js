@@ -74,10 +74,10 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
     help: false,
   };
 
-  const validateOverridePath = (value) => {
+  const validateNonEmptyPath = (value, message) => {
     const trimmed = typeof value === 'string' ? value.trim() : '';
     if (!trimmed) {
-      throw new Error('--i18n-override 需要传入有效的覆盖词典文件路径');
+      throw new Error(message);
     }
     return trimmed;
   };
@@ -118,14 +118,33 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
       continue;
     }
     if (arg === '--i18n-override') {
-      options.i18nOverride = validateOverridePath(
+      options.i18nOverride = validateNonEmptyPath(
         readNextOptionValue(i, '--i18n-override 需要传入覆盖词典文件路径'),
+        '--i18n-override 需要传入有效的覆盖词典文件路径',
       );
       i += 1;
       continue;
     }
     if (arg.startsWith('--i18n-override=')) {
-      options.i18nOverride = validateOverridePath(arg.slice('--i18n-override='.length));
+      options.i18nOverride = validateNonEmptyPath(
+        arg.slice('--i18n-override='.length),
+        '--i18n-override 需要传入有效的覆盖词典文件路径',
+      );
+      continue;
+    }
+    if (arg === '--app-asar') {
+      options.appAsar = validateNonEmptyPath(
+        readNextOptionValue(i, '--app-asar 需要传入有效的 app.asar 文件路径'),
+        '--app-asar 需要传入有效的 app.asar 文件路径',
+      );
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--app-asar=')) {
+      options.appAsar = validateNonEmptyPath(
+        arg.slice('--app-asar='.length),
+        '--app-asar 需要传入有效的 app.asar 文件路径',
+      );
       continue;
     }
     if (arg === '--port') {
@@ -170,6 +189,7 @@ export function formatUsage(commandName = 'inject') {
     '  --no-shift                关闭对话流居中阅读偏移微调',
     '  --no-i18n                 关闭界面简体中文汉化（若已汉化则自动还原英文）',
     '  --i18n-override <路径>    指定额外的用户覆盖词典 JSON 文件',
+    '  --app-asar <路径>         手动指定 Antigravity resources/app.asar 路径（用于 patch-app/unpatch-app）',
     '  --daemon                  以无交互后台日志模式运行监听（主要用于自启守护）',
     '  --if-not-running          仅在当前无运行中监听进程时启动（避免重复守护）',
     '  -h, --help                显示此帮助信息',

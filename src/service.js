@@ -10,6 +10,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { getAppAsarStatus } from './asar.js';
 import { getPortFilePath, listPages, readPort } from './cdp.js';
 import {
   cleanupExitedPidFile,
@@ -801,6 +802,12 @@ export async function installTheme(options = {}) {
     );
   } else {
     logger.log('  - 当前客户端：未检测到运行中的 Antigravity，启动客户端后将自动注入。');
+    const appPatch = getAppAsarStatus({ appAsar: options.appAsar, platform, env, home });
+    if (appPatch.found && !appPatch.patched) {
+      logger.log(
+        '  - 提示：Antigravity 2.33.0+ 默认关闭 CDP 调试端口；若客户端已运行却始终无法连接，可关闭客户端后执行 npm run patch-app（或双击 patch-app.bat）改写安装包。',
+      );
+    }
   }
 
   return {
@@ -845,6 +852,12 @@ export async function uninstallTheme(options = {}) {
   logger.log(
     `[冬雪莲] 卸载完成：${removedAutostart ? '已移除登录自启，' : ''}${removeRes.stoppedWatcher ? '已停止后台监听，' : ''}已清理页面注入。`,
   );
+  const remainingPatch = getAppAsarStatus({ appAsar: options.appAsar, platform, env, home });
+  if (remainingPatch.patched) {
+    logger.log(
+      `[冬雪莲] 提示：检测到 Antigravity 安装包仍带有直注补丁（${remainingPatch.asarPath}），如需一并还原请关闭客户端后执行 npm run unpatch-app（或双击 unpatch-app.bat）。`,
+    );
+  }
 
   return {
     uninstalled: true,
@@ -877,6 +890,7 @@ export async function getInstallStatus(options = {}) {
     fetchImpl,
     timeoutMs: options.timeoutMs ?? 1500,
   });
+  const appPatch = getAppAsarStatus({ appAsar: options.appAsar, platform, env, home });
 
   if (!options.silent) {
     logger.log('[冬雪莲] 运行状态报告：');
@@ -887,6 +901,12 @@ export async function getInstallStatus(options = {}) {
     logger.log(
       `  - Antigravity CDP：${cdp.cdpReachable ? `已就绪（端口 ${cdp.port}，${cdp.pageCount} 个页面）` : '未检测到运行中实例'}`,
     );
+    const patchSummary = appPatch.patched
+      ? `已打补丁 (主题 v${appPatch.meta?.themeVersion || '?'}${appPatch.appVersion ? `, 客户端 ${appPatch.appVersion}` : ''})`
+      : appPatch.found
+        ? `未打补丁 (${appPatch.asarPath})`
+        : '未检测到安装包';
+    logger.log(`  - 安装包直注补丁：${patchSummary}`);
   }
 
   return {
@@ -897,5 +917,6 @@ export async function getInstallStatus(options = {}) {
     watcherPid,
     options: autostart.state?.options ?? null,
     cdp,
+    appPatch,
   };
 }
