@@ -428,3 +428,103 @@ test('带前后空白的正则动态文案保留空白并正确汉化与还原�
     globalThis.document = origDoc;
   }
 });
+
+test('新版 Antigravity 词典、动态模板、属性专用动作与文件树/分支/转写排除保护均准确生效且可还原', () => {
+  const css = buildThemeCss({ rootDir: ROOT });
+  const { baseCount, dict } = loadI18nDictionary({ rootDir: ROOT });
+  assert.ok(baseCount >= 3000, `基础词典应至少包含 3000 词条（实际 ${baseCount}）`);
+
+  const page = createMockAntigravityPage({ light: true });
+  const { document, elements } = page;
+  const { stage } = elements;
+
+  const samples = [
+    ['Enable', '启用'],
+    ['GitHub Policies', 'GitHub 访问策略'],
+    ['Match Condition (CEL)', '匹配条件 (CEL)'],
+    ['Commit staged changes', '提交已暂存更改'],
+    ['Generation Steps (', '生成步骤 ('],
+    ['  tokens (', '  Token ('],
+    ['Unfold lines 12-48', '展开第 12–48 行'],
+    ['Started "playwright".', '已启动“playwright”。'],
+    ['Failed to save project settings: permission denied', '保存项目设置失败：permission denied'],
+    ['Playback speed 1.5x', '播放速度 1.5x'],
+    ['Zoom 125%, reset to fit', '缩放 125%，点击恢复适应窗口'],
+    ['Build with Gemini Plugins', '使用 Gemini 插件构建'],
+    ['This window\'s agents, files, and terminals are on devbox.', '此窗口中的 Agent、文件与终端均运行于 devbox。'],
+  ];
+
+  const nodes = samples.map(([raw]) => {
+    const sp = document.createElement('span');
+    const tn = appendText(document, sp, raw);
+    stage.appendChild(sp);
+    return tn;
+  });
+
+  // 通用属性动作规则与正文区别验证：按钮属性应翻译，正文句子不误翻
+  const openBtn = document.createElement('button');
+  openBtn.setAttribute('aria-label', 'Open README.md');
+  openBtn.setAttribute('title', 'Delete legacy-cache');
+  const openBtnSkill = document.createElement('button');
+  openBtnSkill.setAttribute('aria-label', 'Open ppt-master skill');
+  const openProse = document.createElement('span');
+  const openProseText = appendText(document, openProse, 'Open Source Contribution');
+  stage.appendChild(openBtn);
+  stage.appendChild(openBtnSkill);
+  stage.appendChild(openProse);
+
+  // 文件树、文件标题、Git 分支名、语音实时转写应严格排除，不得把同名单词误翻
+  const treeRow = document.createElement('div');
+  const treeIcon = document.createElement('div');
+  treeIcon.setAttribute('data-testid', 'file-tree-node-icon');
+  const treeLabel = document.createElement('div');
+  const treeText = appendText(document, treeLabel, 'Enable');
+  treeRow.appendChild(treeIcon);
+  treeRow.appendChild(treeLabel);
+  stage.appendChild(treeRow);
+
+  const fileTitle = document.createElement('span');
+  fileTitle.setAttribute('data-testid', 'file-title-name');
+  const fileTitleText = appendText(document, fileTitle, 'Settings');
+  stage.appendChild(fileTitle);
+
+  const branchOpt = document.createElement('div');
+  branchOpt.setAttribute('data-testid', 'branch-option');
+  const branchText = appendText(document, branchOpt, 'Active');
+  stage.appendChild(branchOpt);
+
+  const transcript = document.createElement('ol');
+  transcript.setAttribute('data-testid', 'live-transcript');
+  const transcriptText = appendText(document, transcript, 'Commit');
+  stage.appendChild(transcript);
+
+  const script = buildInjectScript(css, {
+    avatar: false,
+    shift: true,
+    i18n: true,
+    i18nDict: dict,
+    version: '0.1.0',
+  });
+  page.evaluate(script);
+
+  samples.forEach(([, expected], idx) => {
+    assert.equal(nodes[idx].nodeValue, expected);
+  });
+  assert.equal(openBtn.getAttribute('aria-label'), '打开 README.md');
+  assert.equal(openBtn.getAttribute('title'), '删除 legacy-cache');
+  assert.equal(openBtnSkill.getAttribute('aria-label'), '打开 ppt-master 技能');
+  assert.equal(openProseText.nodeValue, 'Open Source Contribution', '正文内普通 Open 开头文本不应套用属性兜底规则');
+
+  assert.equal(treeText.nodeValue, 'Enable', '文件树节点名应保持原文');
+  assert.equal(fileTitleText.nodeValue, 'Settings', '文件标题名应保持原文');
+  assert.equal(branchText.nodeValue, 'Active', 'Git 分支名应保持原文');
+  assert.equal(transcriptText.nodeValue, 'Commit', '实时语音转写文本应保持原文');
+
+  page.evaluate(REMOVE_EXPRESSION);
+  samples.forEach(([raw], idx) => {
+    assert.equal(nodes[idx].nodeValue, raw);
+  });
+  assert.equal(openBtn.getAttribute('aria-label'), 'Open README.md');
+  assert.equal(openBtn.getAttribute('title'), 'Delete legacy-cache');
+  assert.equal(openBtnSkill.getAttribute('aria-label'), 'Open ppt-master skill');
+});

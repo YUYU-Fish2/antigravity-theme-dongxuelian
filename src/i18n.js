@@ -250,9 +250,9 @@ export function createI18nController(dict, version, restoreDomFn) {
   }
   const origTextMap = window.__dxlOrigTextMap;
 
-  // 保护用户输入、Markdown AI 正文、代码块、终端、编辑器、会话标题及第三方监测插件不被汉化改写
+  // 保护用户输入、Markdown AI 正文、代码块、终端、编辑器、文件树文件名、分支名、语音转写与批注正文及第三方监测插件不被汉化改写
   const CONTAINER_EXCLUDE_SELECTOR =
-    'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], .md-divider-spacing, [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip, [data-ag-pulse-bar], [id^="ag-pulse-"]';
+    'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], .md-divider-spacing, [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip, [data-ag-pulse-bar], [id^="ag-pulse-"], [data-testid="file-tree-node-icon"] + *, [data-testid="file-title-name"], [data-testid="entity-pill"], [data-testid="branch-option"], [data-testid="branch-pill-label"], [data-testid="branch-repo-label"], [data-testid="live-transcript"], [data-testid="comment-card-text"], [data-testid="pill-comment-anchor-text"], [data-testid="lsp-hover-body"], [data-testid="lsp-hover-signature"], [data-testid="webview-download-filename"], [data-testid="background-task-command"], [data-testid="automation-instructions-markdown"]';
   const TEXT_EXCLUDE_SELECTOR =
     `textarea, input, [contenteditable="true"], [data-testid="conversation-navigator-turn"], ${CONTAINER_EXCLUDE_SELECTOR}`;
 
@@ -344,6 +344,9 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^(\d+)\s+posts?$/i, '$1 条发言'],
     [/^(\d+)\s+members?$/i, '$1 名成员'],
     [/^(\d+)\s+MCP servers?\s+failed to start$/i, '$1 个 MCP 服务器启动失败'],
+    [/^(\d+)\s+seconds?$/i, '$1 秒'],
+    [/^(\d+)\s+Drafts?$/i, '$1 个草稿'],
+    [/^(\d+(?:\.\d+)?)x\s+playback\s+speed$/i, '$1 倍播放速度'],
   ];
 
   const RE_WINDOW_LIMIT_COMBINED = /^(\d+)\s*([smhd])\s+limit,\s*resets in\s+(.+)$/i;
@@ -581,6 +584,116 @@ export function createI18nController(dict, version, restoreDomFn) {
     [RE_SORT_FILTER_ACTIVE, '排序与筛选对话（已启用 $1 项）'],
     [RE_STILL_THINKING_SEC, '仍在思考（$1 秒）'],
     [RE_SEARCH_GOOGLE, (_, q) => `使用 Google 搜索“${q}”`],
+    [/^Show\s+submitted\s*\((\d+)\)$/i, '查看已提交 ($1)'],
+    [/^Show\s+more\s*\((\d+)\)$/i, '查看更多 ($1)'],
+    [/^Start\s+Best-of-(\d+)$/i, '启动 Best-of-$1'],
+    [/^Select\s+model\s+with\s+(.+)$/i, '按 $1 选择模型'],
+    [/^Sign\s+in\s+to\s+(.+)$/i, '登录 $1'],
+    [/^Save\s+rule\s+to\s+always\s+allow\s+(.+?)\?$/i, '是否保存规则以始终允许 $1？'],
+    [/^Shortcut\s+(.+?)\s+for\s+(.+)$/i, '$2 的快捷键 $1'],
+    [/^Started\s+"(.+)"\.$/, '已启动“$1”。'],
+    [/^System\s+default\s*\((.+)\)$/i, '系统默认 ($1)'],
+  ];
+
+  // 新版 UI 高频通用动态模板规则（精确句式/前缀锚定，避免误伤常规英语正文）
+  const GENERAL_DYNAMIC_RULES = [
+    [/^Available\s+AI\s+Credits:\s*(.+)$/i, '可用 AI 点数：$1'],
+    [/^Auth\s+code\s+for\s+(.+)$/i, '$1 的授权码'],
+    [/^Add\s+bundle\s+(.+)$/i, '添加合集包 $1'],
+    [/^App\s+view\s+for\s+(.+)$/i, '$1 的应用视图'],
+    [/^Agent\s+finished:\s*(.+)$/i, 'Agent 已完成：$1'],
+    [/^Allow\s+(.+?)\?$/i, '是否允许 $1？'],
+    [/^A\s+file\s+already\s+exists\s+at\s+(.+)\.$/, '$1 处已存在同名文件。'],
+    [/^Blocked\s+navigation\s+to\s+"(.+)"$/, '已拦截前往“$1”的导航'],
+    [/^Blocked\s+popup\s+to\s+"(.+)"$/, '已拦截前往“$1”的弹窗'],
+    [/^Blocked\s+external\s+popup\s+navigation\s+to\s+"(.+)"$/, '已拦截外部弹窗跳转至“$1”'],
+    [/^Blocked\s+popup\s+navigation\s+to\s+unapproved\s+domain:\s*(.+)$/, '已拦截前往未授权域名的弹窗：$1'],
+    [/^Blocked\s+cross-origin\s+subframe\s+"(.+)"$/, '已拦截跨源子框架“$1”'],
+    [/^Build\s+with\s+(.+?)\s+Plugins$/i, '使用 $1 插件构建'],
+    [/^Can['’]t\s+create\s+this\s+path\s*(?:\u2014|--|-)\s*[“"](.+?)[”"]\s+is\s+a\s+file,\s+not\s+a\s+folder\.$/, '无法创建此路径——“$1”是文件而非文件夹。'],
+    [/^Cannot\s+add\s+folder:\s*"(.+?)"\s+is\s+not\s+a\s+valid\s+folder\s+location\.$/, '无法添加目录：“$1”不是有效的文件夹位置。'],
+    [/^Connected\s+to\s+(.+)$/, '已连接至 $1'],
+    [/^Couldn't\s+connect\s+to\s+(.+)$/, '无法连接至 $1'],
+    [/^Couldn't\s+(\w+)\s+conversation$/i, '无法对对话执行 $1 操作'],
+    [/^Connect\s+GitHub:\s*(.+)$/, '连接 GitHub：$1'],
+    [/^Created\s+automation\s+"(.+)"\.$/, '已创建自动化任务“$1”。'],
+    [/^Configure\s+([A-Z][\w .:-]{0,60})$/, '配置 $1'],
+    [/^Deleted\s+"(.+)"\.$/, '已删除“$1”。'],
+    [/^Detached\s+at\s+(.+)$/, '游离于 $1'],
+    [/^Duplicate\s+(.+?)\s+name$/i, '$1名称重复'],
+    [/^Enabled\s+"(.+)"\.$/, '已启用“$1”。'],
+    [/^Enlarged\s+media:\s*(.+)$/i, '放大媒体：$1'],
+    [/^Error:\s*(.+)$/, '错误：$1'],
+    [/^Fold\s+lines\s+(\d+)-(\d+)$/i, '折叠第 $1–$2 行'],
+    [/^Failed\s+to\s+update\s+"(.+)"$/, '更新“$1”失败'],
+    [/^Failed\s+to\s+delete\s+"(.+)"$/, '删除“$1”失败'],
+    [/^Failed\s+to\s+start\s+"(.+)"\.$/, '启动“$1”失败。'],
+    [/^Failed\s+to\s+save\s+"(.+)"$/, '保存“$1”失败'],
+    [/^Failed\s+to\s+save\s+project\s+settings:\s*(.+)$/, '保存项目设置失败：$1'],
+    [/^Failed\s+to\s+save\s+project\s+permissions:\s*(.+)$/, '保存项目权限失败：$1'],
+    [/^Failed\s+to\s+save\s+project\s+Google3\s+configuration:\s*(.+)$/, '保存项目 Google3 配置失败：$1'],
+    [/^Failed\s+to\s+save\s+cloud\s+permission\s+settings:\s*(.+)$/, '保存云端权限设置失败：$1'],
+    [/^Failed\s+to\s+save\s+settings:\s*(.+)$/, '保存设置失败：$1'],
+    [/^Failed\s+to\s+save\s+project:\s*(.+)$/, '保存项目失败：$1'],
+    [/^Failed\s+to\s+create\s+project:\s*(.+)$/, '创建项目失败：$1'],
+    [/^Failed\s+to\s+unarchive\s+project:\s*(.+)$/, '取消归档项目失败：$1'],
+    [/^Failed\s+to\s+select\s+workspace:\s*(.+)$/, '切换工作区失败：$1'],
+    [/^Failed\s+to\s+delete\s+recordings:\s*(.+)$/, '删除录音失败：$1'],
+    [/^Failed\s+to\s+resolve\s+folder:\s*(.+)$/, '解析文件夹失败：$1'],
+    [/^Failed\s+to\s+create\s+(.+)$/, '创建 $1 失败'],
+    [/^Failed\s+to\s+(\w+)\s+conversation$/i, '对对话执行 $1 操作失败'],
+    [/^Generation\s+Steps\s*\((\d+)\)$/i, '生成步骤 ($1)'],
+    [/^Help\s+us\s+improve\s+(.+)\.$/, '帮助我们改进 $1。'],
+    [/^Install\s+folder\s+"(.+?)"\s+is\s+already\s+in\s+use$/, '安装目录“$1”已被占用'],
+    [/^Keep:\s*(.+)$/, '保留：$1'],
+    [/^Low\s+contrast\s+ratio\s+\(([\d.]+:1)\)\.\s*Text\s+may\s+be\s+hard\s+to\s+read\.$/, '对比度过低 ($1)，文字可能难以辨认。'],
+    [/^Manage\s+(.+?)\s+app\s+settings\.$/, '管理 $1 应用设置。'],
+    [/^More\s+actions\s+for\s+(.+)$/i, '$1 的更多操作'],
+    [/^Move\s+to\s+Group:\s*(.+)$/i, '移至分组：$1'],
+    [/^Message\s+from\s+(.+)$/i, '来自 $1 的消息'],
+    [/^Microphone\s+blocked\.\s+Allow\s+in\s+(.+)\.$/, '麦克风已禁用。请在 $1 中允许访问。'],
+    [/^Microphone\s+access\s+for\s+(.+?)\s+was\s+denied\.\s*Quit\s+and\s+reopen\s+the\s+app\s+to\s+be\s+asked\s+again\.$/, '$1 的麦克风权限已被拒绝。退出并重新打开应用即可重新询问授权。'],
+    [/^Open\s+Subagent:\s*(.+)$/i, '打开子 Agent：$1'],
+    [/^Open\s+(.+?)\s+skill$/i, '打开 $1 技能'],
+    [/^Open\s+the\s+(.+?)\s+plugin$/i, '打开 $1 插件'],
+    [/^Open\s+in\s+([A-Z][\w .:-]{0,60})$/, '在 $1 中打开'],
+    [/^Playback\s+speed\s+([\d.]+)x$/i, '播放速度 $1x'],
+    [/^Preview\s+unavailable\s*(?:\u2014|--|-)\s*(.+)$/i, '预览不可用 — $1'],
+    [/^Receive\s+product\s+updates,\s+tips,\s+and\s+promotions\s+from\s+Google\s+(.+?)\s+via\s+email\.$/, '通过电子邮件接收来自 Google $1 的产品更新、使用技巧与活动资讯。'],
+    [/^Restarted\s+"(.+)"\.$/, '已重启“$1”。'],
+    [/^Run\s+(.+?)\s+now$/i, '立即运行 $1'],
+    [/^Remove\s+(.+?)\s+from\s+Recent$/i, '从最近使用中移除 $1'],
+    [/^Resume\s+(\d+)\s+comment\s+drafts?$/i, '恢复 $1 条评论草稿'],
+    [/^Review\s+(.+?)\s+before\s+installing$/i, '安装前请先审阅 $1'],
+    [/^SSH:\s*(.+)$/, 'SSH：$1'],
+    [/^Stop\s+(.+?)\?$/, '是否停止 $1？'],
+    [/^Triggered\s+(.+)$/, '已触发 $1'],
+    [/^The\s+browser\s+blocked\s+the\s+download\s+of\s+(.+)$/, '浏览器已拦截下载 $1'],
+    [/^The\s+(.+?)\s+MCP\s+server\s+requires\s+configuration\s+parameters\s+before\s+it\s+can\s+be\s+started\.$/, '$1 MCP 服务器在启动前需要配置参数。'],
+    [/^The\s+folder\s+[“"](.+?)[”"]\s+does\s+not\s+exist\.\s*Would\s+you\s+like\s+to\s+create\s+it\?$/, '文件夹“$1”不存在，是否立即创建？'],
+    [/^This\s+window's\s+agents,\s+files,\s+and\s+terminals\s+are\s+on\s+(.+)\.$/, '此窗口中的 Agent、文件与终端均运行于 $1。'],
+    [/^Using\s+default\s+(.+?)\s+name$/, '使用默认 $1 名称'],
+    [/^Unfold\s+lines\s+(\d+)-(\d+)$/i, '展开第 $1–$2 行'],
+    [/^Voice\s+speed,\s*(.+)$/i, '语音语速，$1'],
+    [/^When\s+toggled\s+on,\s*(.+?)\s+collects\s+usage\s+data\s+to\s+help\s+Google\s+enhance\s+performance\s+and\s+features\.$/, '开启后，$1 会收集使用数据，帮助 Google 改进产品性能与功能。'],
+    [/^When\s+toggled\s+on,\s*(.+?)\s+will\s+use\s+your\s+AI\s+credits\s+to\s+fulfill\s+model\s+requests\s+once\s+you're\s+out\s+of\s+model\s+quota\.\s*\1\s+will\s+always\s+use\s+your\s+model\s+quota\s+first\s+before\s+using\s+AI\s+credits\.$/, '开启后，当模型配额耗尽时，$1 将使用您的 AI 点数继续完成模型请求；在此之前始终优先消耗模型配额。'],
+    [/^Zoom\s+([\d.]+)%,\s*reset\s+to\s+fit$/i, '缩放 $1%，点击恢复适应窗口'],
+    [/^[“"](.+?)[”"]\s+isn['’]t\s+a\s+valid\s+folder\s+name\.$/, '“$1”不是有效的文件夹名称。'],
+    [/^(.+?)\.\s+Starting\s+in\s+local\s+workspace\.$/, '$1，正在本地工作区中启动。'],
+    [/^(.+?)\s+\(Experimental\)$/, '$1（实验性）'],
+    [/^(.+?)\s+\(Remote\)$/, '$1（远程）'],
+    [/^(.+?)\s+archived$/, '$1 已归档'],
+    [/^(.+?)\s+deleted$/, '$1 已删除'],
+    [/^Failed\s+to\s+archive\s+(.+)$/, '归档 $1 失败'],
+    [/^Failed\s+to\s+delete\s+([^:]+):\s*(.+)$/, '删除 $1 失败：$2'],
+    [/^Failed\s+to\s+delete\s+(.+)$/, '删除 $1 失败'],
+  ];
+
+  // 仅针对按钮与控件属性（title / aria-label / placeholder）的动态前缀动作规则，防止正文误命中
+  const ATTR_DYNAMIC_RULES = [
+    [/^Open\s+(.+)$/, '打开 $1'],
+    [/^Delete\s+(.+)$/, '删除 $1'],
+    [/^Remove\s+(.+)$/, '移除 $1'],
   ];
 
   const KEY_SHORTCUT_RULES = [
@@ -879,6 +992,11 @@ export function createI18nController(dict, version, restoreDomFn) {
       if (keyHit !== null) return replaceTrimmed(raw, trimmed, keyHit);
     }
 
+    if (trimmed.length >= 4 && trimmed.length <= 240) {
+      const dynHit = matchRuleList(trimmed, GENERAL_DYNAMIC_RULES);
+      if (dynHit !== null) return replaceTrimmed(raw, trimmed, dynHit);
+    }
+
     return null;
   };
 
@@ -977,7 +1095,12 @@ export function createI18nController(dict, version, restoreDomFn) {
       return `停止 ${atrim.replace(/^Stop\s+/i, '')}`;
     }
 
-    return computeTextTranslation(atrim, el);
+    const textHit = computeTextTranslation(atrim, el);
+    if (textHit !== null) return textHit;
+    if (atrim.length <= 160) {
+      return matchRuleList(atrim, ATTR_DYNAMIC_RULES);
+    }
+    return null;
   };
 
   const translateTextNode = (node) => {

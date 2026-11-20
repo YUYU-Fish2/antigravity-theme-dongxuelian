@@ -245,6 +245,7 @@ function splitSelectorList(selector) {
 }
 
 function matchSingleAtom(el, atom, scopeEl = null) {
+  if (atom === '*') return el.nodeType === 1;
   if (atom === ':scope') return el === scopeEl;
   if (atom === ':first-child') {
     return el.parentElement?.firstElementChild === el;
@@ -325,17 +326,18 @@ function tokenizeSelector(selector) {
     } else if (ch === ']') {
       bracketDepth = Math.max(0, bracketDepth - 1);
       current += ch;
-    } else if (bracketDepth === 0 && (ch === '>' || /\s/.test(ch))) {
+    } else if (bracketDepth === 0 && (ch === '>' || ch === '+' || /\s/.test(ch))) {
       if (current) {
         tokens.push(current);
         current = '';
       }
-      if (ch === '>') {
+      if (ch === '>' || ch === '+') {
         if (tokens[tokens.length - 1] === ' ') tokens.pop();
-        if (tokens[tokens.length - 1] !== '>') tokens.push('>');
+        if (tokens[tokens.length - 1] !== ch) tokens.push(ch);
       } else if (
         tokens.length > 0 &&
         tokens[tokens.length - 1] !== '>' &&
+        tokens[tokens.length - 1] !== '+' &&
         tokens[tokens.length - 1] !== ' '
       ) {
         tokens.push(' ');
@@ -353,6 +355,11 @@ function matchTokensFromRight(el, tokens, idx, scopeEl) {
   if (!matchesSimpleSelector(el, tokens[idx], scopeEl)) return false;
   if (idx === 0) return true;
   const comb = tokens[idx - 1];
+  if (comb === '+') {
+    const siblings = el.parentElement?.children;
+    const pos = siblings ? siblings.indexOf(el) : -1;
+    return pos > 0 && matchTokensFromRight(siblings[pos - 1], tokens, idx - 2, scopeEl);
+  }
   if (comb === '>') {
     return Boolean(el.parentElement) && matchTokensFromRight(el.parentElement, tokens, idx - 2, scopeEl);
   }
