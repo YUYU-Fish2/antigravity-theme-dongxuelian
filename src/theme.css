@@ -37,12 +37,16 @@ body.theme-light {
   --background: #F7F3EB !important;
   --content: #F7F3EB !important;
   --shell: #F7F3EB !important;
+  --shell-canvas: #F7F3EB !important;
+  --body-background: #F7F3EB;
   --color-shell: #F7F3EB !important;
   --foreground: #2C4268 !important;
 
   --card: #FFFDF8 !important;
   --card-foreground: #2C4268 !important;
   --card-border: #D4D7DE !important;
+  --card-edge: rgba(44, 66, 104, 0.16) !important;
+  --surface: #FFFDF8 !important;
 
   --popover: #FFFDF8 !important;
   --popover-foreground: #2C4268 !important;
@@ -163,7 +167,7 @@ body.theme-light {
 /* ==========================================================================
    2. 全页连续纸面（640px 纤维平铺 + 35% 暖纸白遮罩）
    ========================================================================== */
-/* 放行内置浏览器 WebContentsView 透明打孔，仅在根节点铺设单张连续纸面 */
+/* 放行内置浏览器 WebContentsView 透明打孔，常规状态在根节点铺设单张连续纸面 */
 body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
 body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) #root {
   background-color: #F7F3EB !important;
@@ -174,25 +178,53 @@ body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browse
   background-size: auto, 640px 640px !important;
 }
 
+/* Built-in Browser 分屏开启时，打孔祖先链保持绝对透明，只在非打孔分栏铺设视口对齐的 640px 连续纸面 */
+body.theme-light:is([data-has-browser-hole="true"], [data-has-drawer-browser-hole="true"]),
+body.theme-light:is([data-has-browser-hole="true"], [data-has-drawer-browser-hole="true"]) #root,
+body.theme-light .browser-hole-ancestor[data-has-browser-hole="true"] {
+  --body-background: transparent;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+body.theme-light:is([data-has-browser-hole="true"], [data-has-drawer-browser-hole="true"]) :is(
+  [data-testid="title-menu-bar"],
+  [data-testid="sidebar-split"] > :first-child,
+  [role="navigation"]:is([aria-label="Sidebar"], [data-dxl-orig-aria-label="Sidebar"]):not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
+  [data-main-content-header]:not([data-has-browser-hole="true"]):not(:has([data-browser-hole="true"])),
+  [data-main-content-body]:not([data-has-browser-hole="true"]):not(:has([data-browser-hole="true"])),
+  [data-side-panel-strip]:not([data-has-browser-hole="true"]):not(:has([data-browser-hole="true"])),
+  [data-side-panel-body]:not([data-has-browser-hole="true"]):not(:has([data-browser-hole="true"])),
+  [data-split-panes] [data-tiling-pane]:not([data-has-browser-hole="true"]):not(:has([data-browser-hole="true"]))
+) {
+  background-color: #F7F3EB !important;
+  background-image:
+    linear-gradient(rgb(250 245 235 / 0.35), rgb(250 245 235 / 0.35)),
+    url("__DXL_PAPER_URI__") !important;
+  background-repeat: repeat !important;
+  background-size: auto, 640px 640px !important;
+  background-attachment: fixed !important;
+}
+
 /* 穿透 Antigravity 外壳与分栏实色层，让整张 640px 连续纸面贯通侧栏、顶栏与主画布 */
 body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .agy-shell,
 body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .agy-inset-shell,
 body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .agy-sheet,
 body.theme-light [data-split-fill-edge],
-body.theme-light [data-main-content-header],
-body.theme-light [data-main-content-body]:not(:has([data-browser-hole="true"])),
-body.theme-light [data-side-panel-body]:not(:has([data-browser-hole="true"])),
-body.theme-light [data-testid="sidebar-split"] .bg-sidebar.flex-col,
-body.theme-light [role="navigation"][aria-label="Sidebar"]:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
-body.theme-light .bg-sidebar.w-full,
-body.theme-light #root > div,
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [data-main-content-header],
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [data-main-content-body]:not(:has([data-browser-hole="true"])),
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [data-side-panel-body]:not(:has([data-browser-hole="true"])),
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [data-testid="sidebar-split"] .bg-sidebar.flex-col,
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [role="navigation"]:is([aria-label="Sidebar"], [data-dxl-orig-aria-label="Sidebar"]):not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]),
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) .bg-sidebar.w-full,
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) #root > div,
 body.theme-light main,
 body.theme-light .agy-home,
 body.theme-light [data-testid="conversation-view"],
 body.theme-light [data-dxl-stage="conversation"],
-body.theme-light [class*="titlebar"],
-body.theme-light [class*="title-bar"],
-body.theme-light [data-testid="title-menu-bar"] {
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [class*="titlebar"],
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [class*="title-bar"],
+body.theme-light:not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"]) [data-testid="title-menu-bar"] {
   background-color: transparent !important;
   background-image: none !important;
 }
@@ -221,7 +253,6 @@ body.theme-light [data-dxl-stage="conversation"] {
   container-type: inline-size;
 }
 
-body.theme-light[data-has-browser-hole="true"] [data-dxl-stage="conversation"]::before,
 body.theme-light [data-dxl-stage="conversation"]:has([data-browser-hole="true"])::before {
   display: none !important;
 }
@@ -253,7 +284,7 @@ body.theme-light [data-dxl-stage="conversation"]::before {
   mask-composite: intersect;
 }
 
-/* 窄列优先保正文清晰，只减弱插画层墨迹，不降低文字与控件不透明度 */
+/* 窄列分屏：按栏宽比例缩放抱书插画并安置于右下留白区，兼顾立绘完整感与正文可读性 */
 @container dxl-reading (max-width: 899.98px) {
   body.theme-light [data-dxl-stage="conversation"]::before {
     inset: 0 !important;
@@ -263,22 +294,22 @@ body.theme-light [data-dxl-stage="conversation"]::before {
     height: auto !important;
     aspect-ratio: auto;
     transform: none !important;
-    background-size: auto 64%;
-    background-position: right -96px center;
+    background-size: min(88cqi, 620px) auto;
+    background-position: right -36px bottom 68px;
     mask-image:
-      linear-gradient(90deg, transparent 52%, rgb(0 0 0 / 0.08) 68%, rgb(0 0 0 / 0.24) 84%, rgb(0 0 0 / 0.42)),
-      linear-gradient(transparent, #000 56px, #000 calc(100% - 56px), transparent);
+      linear-gradient(90deg, transparent 28%, rgb(0 0 0 / 0.14) 48%, rgb(0 0 0 / 0.42) 72%, rgb(0 0 0 / 0.62)),
+      linear-gradient(transparent, #000 56px, #000 calc(100% - 48px), transparent);
     mask-composite: intersect;
   }
 }
 
 @container dxl-reading (max-width: 640px) {
   body.theme-light [data-dxl-stage="conversation"]::before {
-    background-size: auto 54%;
-    background-position: right -72px center;
+    background-size: min(96cqi, 460px) auto;
+    background-position: right -32px bottom 84px;
     mask-image:
-      linear-gradient(90deg, transparent 62%, rgb(0 0 0 / 0.04) 76%, rgb(0 0 0 / 0.14) 90%, rgb(0 0 0 / 0.28)),
-      linear-gradient(transparent, #000 48px, #000 calc(100% - 48px), transparent);
+      linear-gradient(90deg, transparent 24%, rgb(0 0 0 / 0.10) 46%, rgb(0 0 0 / 0.30) 74%, rgb(0 0 0 / 0.48)),
+      linear-gradient(transparent, #000 48px, #000 calc(100% - 40px), transparent);
     mask-composite: intersect;
   }
 }
@@ -374,6 +405,46 @@ body.theme-light #antigravity\.agentSidePanelInputBox > :not(.surface-composer-c
   color: var(--dxl-ink-primary) !important;
 }
 
+/* 窄列分屏下输入框底栏防挤压：允许 Antigrative Dashboard 状态条自然折行沉底，保住模型选择与发送按钮完整空间 */
+body.theme-light .agy-composer-footer {
+  gap: 4px 6px !important;
+}
+
+@container dxl-reading (max-width: 780px) {
+  body.theme-light .agy-composer-footer:has(#ag-pulse-status-bar) {
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+
+  body.theme-light .agy-composer-footer:has(#ag-pulse-status-bar) > :first-child {
+    flex: 1 1 auto !important;
+    min-width: 140px !important;
+  }
+
+  body.theme-light .agy-composer-footer:has(#ag-pulse-status-bar) > #ag-pulse-status-bar {
+    order: 3 !important;
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 22px !important;
+    margin: 2px 0 0 !important;
+    padding: 4px 4px 0 !important;
+    border-top: 1px dashed rgba(44, 66, 104, 0.14) !important;
+    justify-content: space-between !important;
+  }
+
+  body.theme-light .agy-composer-footer:has(#ag-pulse-status-bar) > :last-child {
+    flex: 0 0 auto !important;
+  }
+}
+
+@container dxl-reading (max-width: 520px) {
+  body.theme-light .agy-composer-footer {
+    flex-wrap: wrap !important;
+  }
+}
+
 /* 发送按钮 */
 body.theme-light [data-testid="send-button"]:not(:disabled) {
   background-color: var(--dxl-accent) !important;
@@ -384,7 +455,7 @@ body.theme-light [data-testid="send-button"]:not(:disabled):hover {
   background-color: var(--dxl-accent-hover) !important;
 }
 
-/* 用户消息气泡 */
+/* 用户消息气泡与子代理/步骤卡片细节打磨 */
 body.theme-light [data-testid="user-input-step"] {
   --card: var(--dxl-bubble) !important;
   --color-card: var(--dxl-bubble) !important;
@@ -393,6 +464,19 @@ body.theme-light [data-testid="user-input-step"] {
   --onyx-well: var(--dxl-bubble) !important;
   --card-border: var(--dxl-border-soft) !important;
   --color-card-border: var(--dxl-border-soft) !important;
+}
+
+body.theme-light .agy-user-bubble,
+body.theme-light [data-testid="user-message-bubble"] {
+  background-color: var(--dxl-bubble) !important;
+  border: 1px solid rgba(44, 66, 104, 0.11) !important;
+  box-shadow: 0 2px 8px rgba(44, 66, 104, 0.05) !important;
+}
+
+body.theme-light [data-testid="agent-response"] :is(.bg-card, [class*="bg-card/"]) {
+  background-color: rgb(255 253 248 / 0.92) !important;
+  border-color: var(--dxl-border-soft) !important;
+  box-shadow: 0 1px 4px rgba(44, 66, 104, 0.04) !important;
 }
 
 /* 侧栏会话行与选中态 */
@@ -442,10 +526,11 @@ body.theme-light [data-testid="planner-response-text"] pre {
   border: 1px solid var(--dxl-border-soft) !important;
 }
 
+/* 行内代码与链接：柔和群青底 tint + 清晰边界 */
 body.theme-light [data-testid="planner-response-text"] code:not(pre code) {
-  background-color: var(--dxl-sidebar-color) !important;
-  color: var(--dxl-ink-primary) !important;
-  border: 1px solid var(--dxl-border-soft) !important;
+  background-color: rgba(83, 107, 158, 0.09) !important;
+  color: var(--dxl-accent-hover) !important;
+  border: 1px solid rgba(83, 107, 158, 0.18) !important;
   border-radius: 5px !important;
   padding: 1px 5px !important;
 }
@@ -523,4 +608,52 @@ body.theme-light [data-testid="app-icon-new-conversation-button"]:has([data-dxl-
 
 body.theme-light [data-testid="app-icon-new-conversation-button"] > [data-dxl-avatar] {
   margin: 0 !important;
+  width: 26px !important;
+  height: 26px !important;
+}
+
+body.theme-light [data-testid="app-icon-new-conversation-button"] > [data-dxl-avatar] > img {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  box-shadow: 0 1px 3px rgba(44, 66, 104, 0.14);
+}
+
+/* ==========================================================================
+   5. 分屏 Chrome 与内置浏览器工具栏细节（顶栏、标签栏、分割线、地址栏）
+   ========================================================================== */
+body.theme-light [data-testid="title-menu-bar"] [data-testid="title-menu-bar-item"] {
+  color: var(--dxl-ink-secondary) !important;
+}
+
+body.theme-light [data-testid="title-menu-bar"] [data-testid="title-menu-bar-item"]:hover {
+  background-color: rgba(44, 66, 104, 0.07) !important;
+  color: var(--dxl-ink-primary) !important;
+}
+
+body.theme-light [data-side-panel-strip] .agy-aux-tab {
+  border-radius: 8px !important;
+  color: var(--dxl-ink-secondary) !important;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+body.theme-light [data-side-panel-strip] .agy-aux-tab:not(.bg-transparent) {
+  background-color: var(--dxl-paper-card) !important;
+  color: var(--dxl-ink-primary) !important;
+  box-shadow: inset 0 0 0 1px var(--dxl-border-soft), 0 1px 3px rgba(44, 66, 104, 0.06) !important;
+}
+
+body.theme-light [data-testid="builtin-browser-pane"] > :first-child:not([data-browser-hole="true"]):not(:has([data-browser-hole="true"])) {
+  background-color: var(--dxl-paper-color) !important;
+  border-bottom: 1px solid rgba(44, 66, 104, 0.10) !important;
+}
+
+body.theme-light [data-testid="builtin-browser-pane"] :is(input, [role="combobox"]) {
+  background-color: var(--dxl-paper-card) !important;
+  color: var(--dxl-ink-primary) !important;
+  border-color: var(--dxl-border-soft) !important;
+}
+
+body.theme-light [data-split-sash]:is(:hover, :has([data-dragging])) {
+  background-color: rgba(83, 107, 158, 0.24) !important;
 }

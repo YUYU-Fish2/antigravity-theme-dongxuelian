@@ -77,4 +77,24 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
     css.includes(':not([data-has-browser-hole="true"]):not([data-has-drawer-browser-hole="true"])'),
     '缺少内置浏览器 WebContentsView 透明打孔豁免规则',
   );
+  assert.ok(
+    css.includes('--shell-canvas: #F7F3EB !important') &&
+      css.includes('--card-edge: rgba(44, 66, 104, 0.16) !important') &&
+      css.includes('body.theme-light:is([data-has-browser-hole="true"], [data-has-drawer-browser-hole="true"])') &&
+      css.includes('background-attachment: fixed !important') &&
+      css.includes('[data-dxl-orig-aria-label="Sidebar"]'),
+    '缺少分屏与内置浏览器共存时的非打孔面板连续纸面与汉化后侧栏兼容规则',
+  );
+  assert.ok(
+    !css.includes('body.theme-light[data-has-browser-hole="true"] [data-dxl-stage="conversation"]::before') &&
+      css.includes('[data-dxl-stage="conversation"]:has([data-browser-hole="true"])::before'),
+    '内置浏览器位于侧栏分屏时不应整页隐藏对话区抱书插画',
+  );
+  assert.ok(
+    css.includes('@container dxl-reading (max-width: 780px)') &&
+      css.includes('.agy-composer-footer:has(#ag-pulse-status-bar)') &&
+      css.includes('[data-side-panel-strip] .agy-aux-tab') &&
+      css.includes('[data-testid="builtin-browser-pane"]'),
+    '缺少窄屏底栏防挤压折行与内置浏览器分屏标签/工具栏打磨规则',
+  );
 });
