@@ -628,7 +628,7 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Add\s+bundle\s+(.+)$/i, '添加合集包 $1'],
     [/^App\s+view\s+for\s+(.+)$/i, '$1 的应用视图'],
     [/^Agent\s+finished:\s*(.+)$/i, 'Agent 已完成：$1'],
-    [/^Allow\s+(.+?)\?$/i, '是否允许 $1？'],
+    [/^(?!Allow\s+.*?\bto\b\s+.*?\?$)Allow\s+([^\r\n.!?]{1,48})\?$/i, '是否允许 $1？'],
     [/^A\s+file\s+already\s+exists\s+at\s+(.+)\.$/, '$1 处已存在同名文件。'],
     [/^Blocked\s+navigation\s+to\s+"(.+)"$/, '已拦截前往“$1”的导航'],
     [/^Blocked\s+popup\s+to\s+"(.+)"$/, '已拦截前往“$1”的弹窗'],
@@ -746,7 +746,7 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Searched\s+web:\s*"([^"\r\n]*)"$/i, '已搜索网页：“$1”'],
     [/^Self\s*\(([^)\r\n]{1,60})\)$/i, '自身 ($1)'],
     [/^Send\s+all\s*\((\d+)\)$/i, '全部发送 ($1)'],
-    [/^Set\s+up\s+(.+)$/i, '设置 $1'],
+    [/^(?!Set\s+up\s+(?:a|an|the|your|this|these|those|new|more|another)\b)Set\s+up\s+([A-Za-z0-9][^\r\n.,!?;:]{0,39})$/i, '设置 $1'],
     [/^Show\s+(\d+)\s+earlier\s+posts?\s*\((\d+)\s+older\)$/i, '显示前 $1 条更早发言（共 $2 条）'],
     [/^Showing\s+first\s+(\d+)\s+references$/i, '显示前 $1 个引用'],
     [/^Signed\s+in:\s*(.+)$/i, '已登录：$1'],
@@ -779,8 +779,8 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^(.+?)\.\s+Starting\s+in\s+local\s+workspace\.$/, '$1，正在本地工作区中启动。'],
     [/^(.+?)\s+\(Experimental\)$/, '$1（实验性）'],
     [/^(.+?)\s+\(Remote\)$/, '$1（远程）'],
-    [/^(.+?)\s+archived$/, '$1 已归档'],
-    [/^(.+?)\s+deleted$/, '$1 已删除'],
+    [/^(?!.+\b(?:been|was|were|is|are|be|has|have|had)\s+archived$)([^\r\n.!?]{1,48})\s+archived$/, '$1 已归档'],
+    [/^(?!.+\b(?:been|was|were|is|are|be|has|have|had)\s+deleted$)([^\r\n.!?]{1,48})\s+deleted$/, '$1 已删除'],
     [/^Failed\s+to\s+archive\s+(.+)$/, '归档 $1 失败'],
     [/^Failed\s+to\s+delete\s+([^:]+):\s*(.+)$/, '删除 $1 失败：$2'],
     [/^Failed\s+to\s+delete\s+(.+)$/, '删除 $1 失败'],
@@ -1106,7 +1106,7 @@ export function createI18nController(dict, version, restoreDomFn) {
       }
       const mPlan = trimmed.match(/^Your\s+plan:\s*(.+)$/i);
       if (mPlan) {
-        return replaceTrimmed(raw, trimmed, `您的套餐：${mPlan[1].trim()}`);
+        return replaceTrimmed(raw, trimmed, `当前方案：${mPlan[1].trim()}`);
       }
     } else if (firstUpper === 'H') {
       const mHey = trimmed.match(RE_HOME_HEY_NAME);
@@ -1245,15 +1245,6 @@ export function createI18nController(dict, version, restoreDomFn) {
 
     if (atrim === 'File' && el && el.classList && el.classList.contains('segmented')) {
       return '文件';
-    }
-
-    if (
-      el &&
-      el.getAttribute &&
-      el.getAttribute('data-testid') === 'running-row-stop' &&
-      /^Stop\s+(.+)$/i.test(atrim)
-    ) {
-      return `停止 ${atrim.replace(/^Stop\s+/i, '')}`;
     }
 
     const textHit = computeTextTranslation(atrim, el);

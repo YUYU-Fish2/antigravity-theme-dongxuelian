@@ -554,9 +554,9 @@ async function startWebUiServer() {
         raw += c;
         if (raw.length > 16384) {
           aborted = true;
+          req.pause();
           res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end('{"error":"payload too large"}');
-          req.destroy();
+          res.end('{"error":"payload too large"}', () => req.destroy());
         }
       });
       req.on('end', async () => {

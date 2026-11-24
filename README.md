@@ -41,7 +41,7 @@
 ## 效果与特性
 
 - **仅浅色模式生效（视觉主题）**：全部颜色令牌与场景覆盖严格限定在 `html:has(> body.theme-light)` 与 `body.theme-light` 作用域内；将 Antigravity 切换至深色模式（`body.theme-dark`）时自动退出主题视觉，不残留任何覆盖。
-- **全界面简体中文汉化（默认开启）**：内置 3440+ 条 UI 精校词典（[`assets/i18n/zh-CN.json`](assets/i18n/zh-CN.json)）及百余项动态日期 / 耗时 / 配额 / 权限 / 触发器 / 辅助标签规则，浅/深色模式下均实时跟踪 DOM 变化汉化，并严格排除用户输入、Markdown AI 正文、代码块、`Monaco` 编辑器、终端、文件树文件名、Git 分支名、语音转写文本及权限编辑器 `aria-label="Cancel"`。
+- **全界面简体中文汉化（默认开启）**：内置 3430+ 条 UI 精校词典（[`assets/i18n/zh-CN.json`](assets/i18n/zh-CN.json)）及百余项动态日期 / 耗时 / 配额 / 权限 / 触发器 / 辅助标签规则，浅/深色模式下均实时跟踪 DOM 变化汉化，并严格排除用户输入、Markdown AI 正文、代码块、`Monaco` 编辑器、终端、文件树文件名、Git 分支名、语音转写文本及权限编辑器 `aria-label="Cancel"`。
 - **暖纸白与蓝墨色板**：以 `#F7F3EB` 纸底、`#FFFDF8` 卡片、`#EDECE9` 侧栏与 `#2C4268` / `#5C6578` 蓝墨正文为核心，配套 `#536B9E` / `#435882` 靛蓝交互高亮与 `#DDE4EF` / `#DDE8FA` 用户气泡及选中行。
 - **全页连续纸面**：使用 `paper.webp`（640px 平铺 + 35% 暖纸白柔光层）贯通侧栏、顶栏与对话画布，消除竖直纸板接缝，并柔化对话列表顶/底部渐隐条。
 - **彩铅抱书场景舞台**：将 `reading.webp` 锚定在主对话舞台（`[data-dxl-stage="conversation"]::before`）负层级，配合 `@container dxl-reading` 容器查询在宽屏（`>=1100px`）、窗口（`900–1099px`）与窄栏（`<900px`）自动退让与遮罩柔边，弹出菜单/下拉框保持实色 `#FFFDF8` 不透底。
@@ -269,7 +269,7 @@ Antigravity 在退出登录或切换账号时会在内部销毁旧窗口并新�
 antigravity-theme-dongxuelian/
 ├─ assets/                    # 沿用自 dsh-theme-dongxuelian 的 WebP 资源、汉化词典与效果图
 │  ├─ characters/web/avatar.webp
-│  ├─ i18n/zh-CN.json         # 内置 UI 简体中文基础词典（3441 词条）
+│  ├─ i18n/zh-CN.json         # 内置 UI 简体中文基础词典（3437 词条）
 │  ├─ preview/overview-light.png
 │  ├─ scenes/web/reading.webp
 │  └─ textures/web/paper.webp

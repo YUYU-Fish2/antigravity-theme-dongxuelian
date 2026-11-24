@@ -595,13 +595,20 @@ test('Antigravity 2.35.0 新增词典、动态模板、属性文案与高危防�
     ['Yes, allow for this task', '是，在当前任务中允许'],
     ['Orchestrator Settings', 'Orchestrator 设置'],
     ['Inbox Mode', '收件箱模式'],
+    ['Fold Working', '折叠进行中'],
     ['Auto-detect (browser defaults)', '自动检测（浏览器默认）'],
     ['Right-click image to save, or open in a new tab.', '右键点击图片即可保存，或在新标签页中打开。'],
     ['Working · 12s', '正在处理 · 12s'],
     ['Using browser · Clicking button (9s)', '正在操作浏览器 · Clicking button (9s)'],
     ['Waiting for approval to read: /etc/hosts', '正在等待批准读取：/etc/hosts'],
     ['Allowed in my-project', '已在 my-project 中允许'],
-    ['Your plan: Google AI Pro', '您的套餐：Google AI Pro'],
+    ['Your plan: Google AI Pro', '当前方案：Google AI Pro'],
+    ['Set up GitHub', '设置 GitHub'],
+    ['My Project archived', 'My Project 已归档'],
+    ['Allow GitHub?', '是否允许 GitHub？'],
+    ['Set up your API key in Settings to continue.', 'Set up your API key in Settings to continue.'],
+    ['Allow this plugin to read your files?', 'Allow this plugin to read your files?'],
+    ['This project has been archived', 'This project has been archived'],
     ['All 3 will be revoked. The plugin will ask before doing this again.', '全部 3 项权限将被撤销。此后该插件执行相关操作前将重新询问您。'],
     ['Loading earlier posts… (15 older)', '正在加载更早的发言…（还有 15 条）'],
     ['Show 10 earlier posts (25 older)', '显示前 10 条更早发言（共 25 条）'],
@@ -625,6 +632,9 @@ test('Antigravity 2.35.0 新增词典、动态模板、属性文案与高危防�
   applyThemeBtn.setAttribute('aria-label', 'Applied Dark Paper');
   const dismissBtn = document.createElement('button');
   dismissBtn.setAttribute('aria-label', 'Dismiss: Confirm action');
+  const stopRowBtn = document.createElement('button');
+  stopRowBtn.setAttribute('data-testid', 'running-row-stop');
+  stopRowBtn.setAttribute('aria-label', 'Stop worker-1');
   const permHeading = document.createElement('div');
   permHeading.setAttribute('title', 'Plugin permissions');
   const reconnectHeading = document.createElement('div');
@@ -638,6 +648,7 @@ test('Antigravity 2.35.0 新增词典、动态模板、属性文案与高危防�
   stage.appendChild(revokeOneBtn);
   stage.appendChild(applyThemeBtn);
   stage.appendChild(dismissBtn);
+  stage.appendChild(stopRowBtn);
   stage.appendChild(permHeading);
   stage.appendChild(reconnectHeading);
   stage.appendChild(customInput);
@@ -775,6 +786,7 @@ test('Antigravity 2.35.0 新增词典、动态模板、属性文案与高危防�
   assert.equal(revokeOneBtn.getAttribute('aria-label'), '撤销：Read files');
   assert.equal(applyThemeBtn.getAttribute('aria-label'), '已应用 Dark Paper');
   assert.equal(dismissBtn.getAttribute('aria-label'), '忽略：Confirm action');
+  assert.equal(stopRowBtn.getAttribute('aria-label'), '停止 worker-1');
   assert.equal(permHeading.getAttribute('title'), '插件权限');
   assert.equal(reconnectHeading.getAttribute('title'), '正在重新连接至 devbox…');
   assert.equal(customInput.getAttribute('placeholder'), '输入自定义回答');

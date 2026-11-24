@@ -918,7 +918,6 @@
   "Custom agents are not available in Best of N mode.": "多方案择优模式下不可使用自定义 Agent。",
   "Not suitable for Best-of-N": "不适合多方案择优",
   "This request is not well-suited for parallel Best-of-N generation.": "此请求不太适合并行多方案择优生成。",
-  "Worktree": "Worktree",
   "New Worktree": "新建 Worktree",
   "Run in a new worktree": "在新建 Worktree 中运行",
   "Failed to create worktree": "创建 Worktree 失败",
@@ -2260,7 +2259,6 @@
   "This sidecar failed to start.": "此 Sidecar 面板进程启动失败。",
   "Sidecar error": "Sidecar 错误",
   "Sidecar feature is not available.": "当前暂不支持 Sidecar 扩展功能。",
-  "Sidecar": "Sidecar",
   "Untrusted sidecar": "未受信任的 Sidecar",
   "Sidecar View": "Sidecar 视图",
   "Custom View": "自定义视图",
@@ -2271,8 +2269,6 @@
   "Manager Error": "管理器错误",
   "Process Error": "进程错误",
   "Process exited with an error": "进程因错误异常退出",
-  "Agents": "Agents",
-  "Agent": "Agent",
   "Main Agent": "主 Agent",
   "Subagent": "子 Agent",
   "Agent Script": "Agent 脚本",
@@ -2999,7 +2995,6 @@
   "See": "查看",
   "Click": "点击",
   "Card": "卡片",
-  "(ADC)": "(ADC)",
   "Low contrast ratio": "对比度过低",
   "External": "外部用户",
   "Enterprise": "企业用户",
@@ -3439,5 +3434,6 @@
   "Microphone capture is not supported in this environment.": "当前环境不支持麦克风采集。",
   "Microphone is already in use by another recording session.": "麦克风正被另一个录音会话占用。",
   "Use Antigravity through your Gemini subscription.": "通过您的 Gemini 订阅使用 Antigravity。",
-  "Failed to load instances:": "加载实例失败："
+  "Failed to load instances:": "加载实例失败：",
+  "Fold Working": "折叠进行中"
 }
