@@ -326,6 +326,27 @@ export function unlinkQuietly(filePath) {
 }
 
 /**
+ * 仅在 PID 文件内容确属指定进程时才删除，避免旧进程退出时误删新守护写入的 PID。
+ * @param {string} pidFile
+ * @param {number} [ownerPid]
+ */
+export function unlinkPidFileIfOwned(pidFile, ownerPid = process.pid) {
+  if (!pidFile || !existsSync(pidFile)) {
+    return false;
+  }
+  try {
+    const recorded = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+    if (recorded === ownerPid) {
+      unlinkSync(pidFile);
+      return true;
+    }
+  } catch {
+    // 忽略读取或清理失败
+  }
+  return false;
+}
+
+/**
  * 检查指定 PID 进程是否存活。
  * @param {number} pid
  * @returns {boolean}
@@ -630,7 +651,7 @@ export async function startWatch(options = {}) {
   let portTimer = null;
   let retryTimer = null;
   let reconnectTimer = null;
-  const PORT_READY_BACKOFF_MS = [150, 400, 1000];
+  const PORT_READY_BACKOFF_MS = [150, 400, 1000, 2500];
   const fsWatchers = [];
   let waitErrorLogged = false;
 
@@ -882,7 +903,7 @@ export async function startWatch(options = {}) {
   const syncPortWithBackoff = async (attempt = 0) => {
     if (stopped) return;
     await syncNow();
-    if (!lastSyncConnected && !stopped && attempt < PORT_READY_BACKOFF_MS.length) {
+    if ((!lastSyncConnected || !browserSession) && !stopped && attempt < PORT_READY_BACKOFF_MS.length) {
       clearTimeout(retryTimer);
       retryTimer = setTimeout(() => {
         retryTimer = null;
@@ -892,7 +913,7 @@ export async function startWatch(options = {}) {
   };
 
   const registerDirWatcher = (dir, targetNames, onChange) => {
-    if (!existsSync(dir)) return;
+    if (!existsSync(dir)) return null;
     try {
       const watcher = watch(dir, (_eventType, filename) => {
         if (stopped) return;
@@ -905,8 +926,10 @@ export async function startWatch(options = {}) {
         logger.warn(`[冬雪莲] 文件监听异常（${dir}）：${err.message}`);
       });
       fsWatchers.push(watcher);
+      return watcher;
     } catch (err) {
       logger.warn(`[冬雪莲] 启动文件监听失败（${dir}）：${err.message}`);
+      return null;
     }
   };
 
@@ -940,17 +963,67 @@ export async function startWatch(options = {}) {
 
   // 纯事件驱动监听 DevToolsActivePort：客户端未启动或未变更时不触发任何轮询请求
   const resolvedPortFile = resolve(portFile);
-  registerDirWatcher(dirname(resolvedPortFile), new Set([basename(resolvedPortFile)]), () => {
+  const portDir = dirname(resolvedPortFile);
+  const portBase = basename(resolvedPortFile);
+  let activePortWatcher = null;
+
+  const replacePortWatcher = (nextWatcher) => {
+    if (activePortWatcher) {
+      const idx = fsWatchers.indexOf(activePortWatcher);
+      if (idx >= 0) fsWatchers.splice(idx, 1);
+      try {
+        activePortWatcher.close();
+      } catch {
+        // 忽略关闭监听异常
+      }
+      activePortWatcher = null;
+    }
+    activePortWatcher = nextWatcher;
+  };
+
+  const triggerPortSync = () => {
     clearTimeout(portTimer);
     clearTimeout(retryTimer);
     portTimer = setTimeout(() => {
       portTimer = null;
       void syncPortWithBackoff(0);
     }, 80);
-  });
+  };
+
+  const attachPortFileWatcher = () => {
+    if (stopped) return;
+    if (existsSync(portDir)) {
+      const w = registerDirWatcher(portDir, new Set([portBase]), triggerPortSync);
+      replacePortWatcher(w);
+      return;
+    }
+    const parentDir = dirname(portDir);
+    if (parentDir && parentDir !== portDir && existsSync(parentDir)) {
+      const portDirName = basename(portDir);
+      const w = registerDirWatcher(parentDir, new Set([portDirName]), () => {
+        if (stopped || !existsSync(portDir)) return;
+        attachPortFileWatcher();
+        triggerPortSync();
+      });
+      replacePortWatcher(w);
+    }
+  };
+
+  attachPortFileWatcher();
 
   await syncNow();
   initialPayload = null;
+  if (
+    !stopped &&
+    (!lastSyncConnected || !browserSession) &&
+    (port !== undefined || existsSync(resolvedPortFile))
+  ) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void syncPortWithBackoff(0);
+    }, PORT_READY_BACKOFF_MS[0]);
+  }
 
   const stop = async () => {
     if (stopped) return;
@@ -959,6 +1032,7 @@ export async function startWatch(options = {}) {
     clearTimeout(portTimer);
     clearTimeout(retryTimer);
     clearTimeout(reconnectTimer);
+    activePortWatcher = null;
     for (const watcher of fsWatchers) {
       try {
         watcher.close();
@@ -976,7 +1050,7 @@ export async function startWatch(options = {}) {
       await entry.session.close().catch(() => {});
     }
     attached.clear();
-    unlinkQuietly(pidFile);
+    unlinkPidFileIfOwned(pidFile);
   };
 
   return {

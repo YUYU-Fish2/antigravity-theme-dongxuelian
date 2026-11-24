@@ -285,3 +285,41 @@ test('patchAppAsar 与 unpatchAppAsar 完整闭环并验证钩子安全隔离外
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('ASAR 符号链接条目无损重打包，且未打补丁但残留旧备份时 unpatchAppAsar 仅清理备份不覆写原包', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-asar-link-test-'));
+  const asarPath = join(dir, 'app.asar');
+  try {
+    const cleanMain = '"use strict";\nconst electron_1 = require("electron");\nelectron_1.app.whenReady();\n';
+    const baseBuf = createSyntheticAsar({
+      'package.json': JSON.stringify({ name: 'antigravity', version: '2.34.0', main: 'dist/main.js' }),
+      'dist/main.js': cleanMain,
+      'dist/real.txt': 'ok',
+    });
+    const parsedBase = parseAsarArchive(baseBuf);
+    // 手工注入一个符合 @electron/asar 规范的 symlink 节点（无 offset / size）
+    parsedBase.header.files.dist.files['alias.txt'] = { link: 'real.txt' };
+    const asarWithSymlink = buildAsarArchive(parsedBase);
+    const reparsed = parseAsarArchive(asarWithSymlink);
+    assert.equal(readAsarEntryBuffer(reparsed, 'dist/alias.txt'), null);
+    assert.deepEqual(reparsed.header.files.dist.files['alias.txt'], { link: 'real.txt' });
+    assert.equal(readAsarEntryBuffer(reparsed, 'dist/real.txt').toString('utf8'), 'ok');
+
+    // 验证未打补丁但存在旧版 .dxl-backup 时，unpatchAppAsar 不会用旧备份覆写新包
+    writeFileSync(asarPath, asarWithSymlink);
+    const staleBackup = createSyntheticAsar({
+      'package.json': JSON.stringify({ name: 'antigravity', version: '2.33.0', main: 'dist/main.js' }),
+      'dist/main.js': '// stale backup\n',
+    });
+    writeFileSync(`${asarPath}${ASAR_BACKUP_SUFFIX}`, staleBackup);
+
+    const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
+    const unpatchRes = await unpatchAppAsar({ appAsar: asarPath, logger: silentLogger });
+    assert.equal(unpatchRes.restoredFrom, 'none');
+    assert.equal(unpatchRes.removedBackup, true);
+    assert.equal(existsSync(`${asarPath}${ASAR_BACKUP_SUFFIX}`), false);
+    assert.equal(Buffer.compare(readFileSync(asarPath), asarWithSymlink), 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

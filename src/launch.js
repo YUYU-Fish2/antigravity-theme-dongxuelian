@@ -26,7 +26,7 @@ function isSymlinkQuietly(targetPath) {
 }
 
 function tokenizeArgs(argsText) {
-  return String(argsText || '').match(/"[^"]*"|\S+/g) || [];
+  return String(argsText || '').match(/(?:"[^"]*"|[^\s"])+/g) || [];
 }
 
 function stripQuotes(token) {
@@ -508,8 +508,12 @@ export async function removeDesktopLaunchConfig({
       }
     }
     if (updates.length > 0) {
-      await execPowerShell(updates).catch(() => {});
-      revertedCount = updates.length;
+      try {
+        await execPowerShell(updates);
+        revertedCount = updates.length;
+      } catch {
+        return { revertedCount: 0 };
+      }
     }
     delete state.windowsShortcuts;
     atomicWriteJson(stateFile, state);

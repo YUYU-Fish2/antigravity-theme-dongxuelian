@@ -528,3 +528,295 @@ test('新版 Antigravity 词典、动态模板、属性专用动作与文件树/
   assert.equal(openBtn.getAttribute('title'), 'Delete legacy-cache');
   assert.equal(openBtnSkill.getAttribute('aria-label'), 'Open ppt-master skill');
 });
+
+test('内置浏览器地址栏与下拉排除区保持原文，且双计数临时摘要正确翻译并可还原', () => {
+  const css = buildThemeCss({ rootDir: ROOT });
+  const { dict } = loadI18nDictionary({ rootDir: ROOT });
+  const page = createMockAntigravityPage({ light: true });
+  const { document, elements } = page;
+  const { stage } = elements;
+
+  const urlDisplay = document.createElement('span');
+  urlDisplay.setAttribute('data-testid', 'browser-url-display');
+  const urlText = appendText(document, urlDisplay, 'Settings');
+  stage.appendChild(urlDisplay);
+
+  const secOrigin = document.createElement('span');
+  secOrigin.setAttribute('data-testid', 'url-security-origin');
+  const originText = appendText(document, secOrigin, 'Open');
+  stage.appendChild(secOrigin);
+
+  const autoOpt = document.createElement('div');
+  autoOpt.setAttribute('data-testid', 'browser-autocomplete-option');
+  const optText = appendText(document, autoOpt, 'Done');
+  stage.appendChild(autoOpt);
+
+  const dual1 = document.createElement('span');
+  const dual1Text = appendText(document, dual1, 'Explored 2 files and 1 artifact');
+  stage.appendChild(dual1);
+
+  const dual2 = document.createElement('span');
+  const dual2Text = appendText(document, dual2, 'Edited 3 files and 2 artifacts');
+  stage.appendChild(dual2);
+
+  const script = buildInjectScript(css, {
+    avatar: false,
+    shift: true,
+    i18n: true,
+    i18nDict: dict,
+    version: '0.1.0',
+  });
+  page.evaluate(script);
+
+  assert.equal(urlText.nodeValue, 'Settings');
+  assert.equal(originText.nodeValue, 'Open');
+  assert.equal(optText.nodeValue, 'Done');
+  assert.equal(dual1Text.nodeValue, '已探索 2 个文件与 1 个 Artifact');
+  assert.equal(dual2Text.nodeValue, '已编辑 3 个文件与 2 个 Artifact');
+
+  page.evaluate(REMOVE_EXPRESSION);
+  assert.equal(dual1Text.nodeValue, 'Explored 2 files and 1 artifact');
+  assert.equal(dual2Text.nodeValue, 'Edited 3 files and 2 artifacts');
+});
+
+test('Antigravity 2.35.0 新增词典、动态模板、属性文案与高危防误译保护区回归验证', () => {
+  const css = buildThemeCss({ rootDir: ROOT });
+  const { baseCount, dict } = loadI18nDictionary({ rootDir: ROOT });
+  assert.ok(baseCount >= 3400, `基础词典应至少包含 3400 词条（实际 ${baseCount}）`);
+
+  const page = createMockAntigravityPage({ light: true });
+  const { document, elements } = page;
+  const { stage } = elements;
+
+  const samples = [
+    ['Plugin permissions', '插件权限'],
+    ['Dictation languages', '听写语言'],
+    ['Reset to auto', '重置为自动'],
+    ['Yes, allow for this task', '是，在当前任务中允许'],
+    ['Orchestrator Settings', 'Orchestrator 设置'],
+    ['Inbox Mode', '收件箱模式'],
+    ['Auto-detect (browser defaults)', '自动检测（浏览器默认）'],
+    ['Right-click image to save, or open in a new tab.', '右键点击图片即可保存，或在新标签页中打开。'],
+    ['Working · 12s', '正在处理 · 12s'],
+    ['Using browser · Clicking button (9s)', '正在操作浏览器 · Clicking button (9s)'],
+    ['Waiting for approval to read: /etc/hosts', '正在等待批准读取：/etc/hosts'],
+    ['Allowed in my-project', '已在 my-project 中允许'],
+    ['Your plan: Google AI Pro', '您的套餐：Google AI Pro'],
+    ['All 3 will be revoked. The plugin will ask before doing this again.', '全部 3 项权限将被撤销。此后该插件执行相关操作前将重新询问您。'],
+    ['Loading earlier posts… (15 older)', '正在加载更早的发言…（还有 15 条）'],
+    ['Show 10 earlier posts (25 older)', '显示前 10 条更早发言（共 25 条）'],
+  ];
+
+  const textNodes = samples.map(([raw]) => {
+    const sp = document.createElement('span');
+    const tn = appendText(document, sp, raw);
+    stage.appendChild(sp);
+    return tn;
+  });
+
+  // 2.35.0 新增属性（aria-label / title / placeholder）
+  const orchSel = document.createElement('button');
+  orchSel.setAttribute('aria-label', 'Orchestrator model selection');
+  const revokeAllBtn = document.createElement('button');
+  revokeAllBtn.setAttribute('aria-label', 'Revoke all: github');
+  const revokeOneBtn = document.createElement('button');
+  revokeOneBtn.setAttribute('aria-label', 'Revoke: Read files');
+  const applyThemeBtn = document.createElement('button');
+  applyThemeBtn.setAttribute('aria-label', 'Applied Dark Paper');
+  const dismissBtn = document.createElement('button');
+  dismissBtn.setAttribute('aria-label', 'Dismiss: Confirm action');
+  const permHeading = document.createElement('div');
+  permHeading.setAttribute('title', 'Plugin permissions');
+  const reconnectHeading = document.createElement('div');
+  reconnectHeading.setAttribute('title', 'Reconnecting to devbox…');
+  const customInput = document.createElement('input');
+  customInput.setAttribute('placeholder', 'Type your own answer');
+  const identityInput = document.createElement('input');
+  identityInput.setAttribute('placeholder', 'Search by name or username');
+  stage.appendChild(orchSel);
+  stage.appendChild(revokeAllBtn);
+  stage.appendChild(revokeOneBtn);
+  stage.appendChild(applyThemeBtn);
+  stage.appendChild(dismissBtn);
+  stage.appendChild(permHeading);
+  stage.appendChild(reconnectHeading);
+  stage.appendChild(customInput);
+  stage.appendChild(identityInput);
+
+  // 1) conversation-row-history（动态前缀 conversation-row-*）及同级非 truncate 文案
+  const histRow = document.createElement('div');
+  histRow.setAttribute('data-testid', 'conversation-row-history');
+  const histLink = document.createElement('a');
+  histLink.setAttribute('href', '/c/hist-1');
+  histLink.setAttribute('aria-label', 'Settings');
+  const histLinkText = appendText(document, histLink, 'Settings');
+  const histTrunc = document.createElement('span');
+  histTrunc.setAttribute('class', 'truncate');
+  const histTruncText = appendText(document, histTrunc, 'Open');
+  const histAction = document.createElement('span');
+  const histActionText = appendText(document, histAction, 'Archive');
+  histRow.appendChild(histLink);
+  histRow.appendChild(histTrunc);
+  histRow.appendChild(histAction);
+  stage.appendChild(histRow);
+
+  // 2) 面包屑仅保护 /c/ 对话链接，固定页如 /settings 正常汉化
+  const convBreadcrumb = document.createElement('a');
+  convBreadcrumb.setAttribute('data-testid', 'breadcrumb-segment');
+  convBreadcrumb.setAttribute('href', '/c/conv-1');
+  convBreadcrumb.setAttribute('aria-label', 'Settings');
+  const convBreadcrumbText = appendText(document, convBreadcrumb, 'Settings');
+  const settingsBreadcrumb = document.createElement('a');
+  settingsBreadcrumb.setAttribute('data-testid', 'breadcrumb-segment');
+  settingsBreadcrumb.setAttribute('href', '/settings');
+  const settingsBreadcrumbText = appendText(document, settingsBreadcrumb, 'Settings');
+  stage.appendChild(convBreadcrumb);
+  stage.appendChild(settingsBreadcrumb);
+
+  // 3) 精确子选择器保护与同级可汉化 UI 共存验证
+  const siteItem = document.createElement('li');
+  siteItem.setAttribute('data-testid', 'browser-site-data-site');
+  const siteDomain = document.createElement('span');
+  siteDomain.setAttribute('class', 'truncate');
+  const siteDomainText = appendText(document, siteDomain, 'Settings');
+  const siteCookies = document.createElement('span');
+  const siteCookiesText = appendText(document, siteCookies, '3 cookies');
+  siteItem.appendChild(siteDomain);
+  siteItem.appendChild(siteCookies);
+  stage.appendChild(siteItem);
+
+  const sidecarLogs = document.createElement('div');
+  sidecarLogs.setAttribute('data-testid', 'sidecar-logs-content');
+  const logsLoading = document.createElement('p');
+  const logsLoadingText = appendText(document, logsLoading, 'Loading logs...');
+  const logsPre = document.createElement('pre');
+  const logsPreText = appendText(document, logsPre, 'Settings');
+  sidecarLogs.appendChild(logsLoading);
+  sidecarLogs.appendChild(logsPre);
+  stage.appendChild(sidecarLogs);
+
+  const termSurface = document.createElement('div');
+  termSurface.setAttribute('data-testid', 'terminal-surface');
+  const xtermDiv = document.createElement('div');
+  xtermDiv.setAttribute('class', 'xterm');
+  const xtermText = appendText(document, xtermDiv, 'Settings');
+  const termCwd = document.createElement('span');
+  termCwd.setAttribute('data-testid', 'terminal-cwd-1');
+  const termCwdText = appendText(document, termCwd, 'Open');
+  const termEmpty = document.createElement('div');
+  termEmpty.setAttribute('data-testid', 'terminal-empty');
+  const termEmptyText = appendText(document, termEmpty, 'No active terminals');
+  termSurface.appendChild(xtermDiv);
+  termSurface.appendChild(termCwd);
+  termSurface.appendChild(termEmpty);
+  stage.appendChild(termSurface);
+
+  const permTriggerCmd = document.createElement('div');
+  permTriggerCmd.setAttribute('data-testid', 'permission-trigger-command');
+  const permCmdPrefix = appendText(document, permTriggerCmd, 'Command: ');
+  const permCmdMono = document.createElement('span');
+  permCmdMono.setAttribute('class', 'font-mono');
+  const permCmdMonoText = appendText(document, permCmdMono, 'Settings');
+  permTriggerCmd.appendChild(permCmdMono);
+  stage.appendChild(permTriggerCmd);
+
+  const mcpRow = document.createElement('div');
+  mcpRow.setAttribute('data-testid', 'mcp-server-row');
+  const mcpName = document.createElement('span');
+  mcpName.setAttribute('class', 'font-medium');
+  const mcpNameText = appendText(document, mcpName, 'Settings');
+  const mcpCfgBtn = document.createElement('button');
+  const mcpCfgBtnText = appendText(document, mcpCfgBtn, 'Configure');
+  mcpRow.appendChild(mcpName);
+  mcpRow.appendChild(mcpCfgBtn);
+  stage.appendChild(mcpRow);
+
+  // 4) 其余高危保护容器全保持原文
+  const protectedCases = [
+    ['div', { 'data-testid': 'external-link-confirm-uri' }, 'Settings'],
+    ['span', { 'data-testid': 'url-security-host' }, 'Open'],
+    ['span', { 'data-testid': 'webview-prompt-origin' }, 'Done'],
+    ['p', { 'data-testid': 'webview-prompt-message' }, 'Cancel'],
+    ['div', { 'data-testid': 'pdf-text-layer' }, 'Settings'],
+    ['td', { 'data-testid': 'csv-data-row-0' }, 'Open'],
+    ['th', { 'data-testid': 'csv-header-0' }, 'Done'],
+    ['div', { 'data-testid': 'voice-user-message' }, 'Archive'],
+    ['div', { 'data-testid': 'side-question-followup-user' }, 'Cancel'],
+    ['div', { 'data-testid': 'project-selector-github-repo-item' }, 'Open'],
+    ['span', { 'data-testid': 'jj-worktree-selector-label' }, 'Settings'],
+    ['pre', { 'data-testid': 'setup-script-output' }, 'Done'],
+    ['div', { 'data-testid': 'markdown-frontmatter' }, 'Draft'],
+    ['div', { 'data-testid': 'swarm-member-chip' }, 'Running'],
+  ].map(([tag, attrs, raw]) => {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      el.setAttribute(k, v);
+    }
+    const tn = appendText(document, el, raw);
+    stage.appendChild(el);
+    return [tn, raw];
+  });
+
+  const script = buildInjectScript(css, {
+    avatar: false,
+    shift: true,
+    i18n: true,
+    i18nDict: dict,
+    version: '0.1.0',
+  });
+  page.evaluate(script);
+
+  samples.forEach(([, expected], idx) => {
+    assert.equal(textNodes[idx].nodeValue, expected);
+  });
+
+  assert.equal(orchSel.getAttribute('aria-label'), 'Orchestrator 模型选择');
+  assert.equal(revokeAllBtn.getAttribute('aria-label'), '全部撤销：github');
+  assert.equal(revokeOneBtn.getAttribute('aria-label'), '撤销：Read files');
+  assert.equal(applyThemeBtn.getAttribute('aria-label'), '已应用 Dark Paper');
+  assert.equal(dismissBtn.getAttribute('aria-label'), '忽略：Confirm action');
+  assert.equal(permHeading.getAttribute('title'), '插件权限');
+  assert.equal(reconnectHeading.getAttribute('title'), '正在重新连接至 devbox…');
+  assert.equal(customInput.getAttribute('placeholder'), '输入自定义回答');
+  assert.equal(identityInput.getAttribute('placeholder'), '按姓名或用户名搜索');
+
+  assert.equal(histLinkText.nodeValue, 'Settings');
+  assert.equal(histLink.getAttribute('aria-label'), 'Settings');
+  assert.equal(histTruncText.nodeValue, 'Open');
+  assert.equal(histActionText.nodeValue, '归档');
+
+  assert.equal(convBreadcrumbText.nodeValue, 'Settings');
+  assert.equal(convBreadcrumb.getAttribute('aria-label'), 'Settings');
+  assert.equal(settingsBreadcrumbText.nodeValue, '系统设置');
+
+  assert.equal(siteDomainText.nodeValue, 'Settings');
+  assert.equal(siteCookiesText.nodeValue, '3 个 Cookie');
+
+  assert.equal(logsLoadingText.nodeValue, '正在加载日志...');
+  assert.equal(logsPreText.nodeValue, 'Settings');
+
+  assert.equal(xtermText.nodeValue, 'Settings');
+  assert.equal(termCwdText.nodeValue, 'Open');
+  assert.equal(termEmptyText.nodeValue, '暂无活动终端');
+
+  assert.equal(permCmdPrefix.nodeValue, '命令： ');
+  assert.equal(permCmdMonoText.nodeValue, 'Settings');
+
+  assert.equal(mcpNameText.nodeValue, 'Settings');
+  assert.equal(mcpCfgBtnText.nodeValue, '配置');
+
+  protectedCases.forEach(([tn, raw]) => {
+    assert.equal(tn.nodeValue, raw, `高危保护区域应保持原文：${raw}`);
+  });
+
+  page.evaluate(REMOVE_EXPRESSION);
+  samples.forEach(([raw], idx) => {
+    assert.equal(textNodes[idx].nodeValue, raw);
+  });
+  assert.equal(orchSel.getAttribute('aria-label'), 'Orchestrator model selection');
+  assert.equal(revokeAllBtn.getAttribute('aria-label'), 'Revoke all: github');
+  assert.equal(reconnectHeading.getAttribute('title'), 'Reconnecting to devbox…');
+  assert.equal(customInput.getAttribute('placeholder'), 'Type your own answer');
+  assert.equal(siteCookiesText.nodeValue, '3 cookies');
+  assert.equal(termEmptyText.nodeValue, 'No active terminals');
+});

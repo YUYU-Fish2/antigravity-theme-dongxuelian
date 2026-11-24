@@ -28,6 +28,7 @@ import {
 } from '../src/launch.js';
 import {
   PLUGIN_ID,
+  buildPluginPanelHtml,
   getPluginPaths,
   getPluginStatus,
   installPlugin,
@@ -323,4 +324,95 @@ test('i18n 排除列表兼容 Antigrative Dashboard v0.9.5 的 #ag-pulse-status-
   const res = page.evaluate(script);
   assert.equal(res.injected, true);
   assert.equal(textNode.nodeValue, 'Settings', '不应修改插件状态条内文案');
+});
+
+test('回归测试：uninstallPlugin 先停进程再删目录、过期状态修正、带引号参数往返、撤回失败保留状态与 panel 内边距隔离', async () => {
+  // 1. mergeDebugArguments / stripDebugArguments 保持带引号空格参数完整
+  const rawArgs = '--user-data-dir="C:\\My Data\\dir" -- --flag';
+  const merged = mergeDebugArguments(rawArgs);
+  assert.equal(merged.added.length, 2);
+  assert.equal(stripDebugArguments(merged.args, merged.added), rawArgs);
+
+  // 2. buildPluginPanelHtml 使用 .panel 承载 padding 而非 body，防止被 preload.js 覆盖
+  const panelHtml = buildPluginPanelHtml();
+  assert.ok(panelHtml.includes('.panel { padding: 14px; }'));
+  assert.ok(panelHtml.includes('<main class="panel">'));
+  assert.ok(/body\s*\{[^}]*padding:\s*0;/s.test(panelHtml));
+
+  // 3. removeDesktopLaunchConfig 在 execPowerShell 失败时返回 0 并保留 state.windowsShortcuts
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-plugin-reg-'));
+  const home = join(dir, 'home');
+  let dummySidecar = null;
+  try {
+    mkdirSync(join(home, 'Desktop'), { recursive: true });
+    const lnkPath = join(home, 'Desktop', 'Antigravity.lnk');
+    writeFileSync(
+      lnkPath,
+      createSyntheticLnk({
+        target: 'C:\\Users\\Alice\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe',
+        args: '--remote-debugging-port=0 --remote-debugging-address=127.0.0.1',
+      }),
+    );
+    const stateFile = join(dir, 'launch-state.json');
+    writeFileSync(
+      stateFile,
+      JSON.stringify({ windowsShortcuts: { [lnkPath]: [DEBUG_PORT_FLAG, DEBUG_ADDRESS_FLAG] } }),
+      'utf8',
+    );
+    const failRev = await removeDesktopLaunchConfig({
+      platform: 'win32',
+      home,
+      stateFile,
+      execPowerShell: async () => {
+        throw new Error('powershell failed');
+      },
+    });
+    assert.equal(failRev.revertedCount, 0);
+    const preservedState = JSON.parse(readFileSync(stateFile, 'utf8'));
+    assert.ok(preservedState.windowsShortcuts[lnkPath], '失败时应保留追踪记录以便后续重试撤回');
+
+    // 4. getPluginStatus 修正残留 active 状态，uninstallPlugin 能停止存活中的 Sidecar 进程后再删目录
+    const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
+    await installPlugin({
+      rootDir: ROOT,
+      home,
+      platform: 'win32',
+      env: { ...process.env, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming') },
+      logger: silentLogger,
+    });
+    const paths = getPluginPaths({ home });
+    writeFileSync(paths.statusFile, JSON.stringify({ state: 'active', attachedCount: 2 }), 'utf8');
+    writeFileSync(paths.pidFile, '99999999\n', 'utf8');
+    const staleStatus = getPluginStatus({ home, platform: 'win32', env: { USERPROFILE: home } });
+    assert.equal(staleStatus.running, false);
+    assert.equal(staleStatus.integration.state, 'stopped');
+    assert.equal(staleStatus.integration.attachedCount, 0);
+
+    dummySidecar = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    const exitPromise = new Promise((resolveExit) => dummySidecar.once('exit', resolveExit));
+    writeFileSync(paths.pidFile, `${dummySidecar.pid}\n`, 'utf8');
+    writeFileSync(paths.statusFile, JSON.stringify({ state: 'active', attachedCount: 1 }), 'utf8');
+    const liveStatus = getPluginStatus({ home, platform: 'win32', env: { USERPROFILE: home } });
+    assert.equal(liveStatus.running, true);
+    assert.equal(liveStatus.integration.state, 'active');
+
+    const unRes = await uninstallPlugin({
+      home,
+      platform: 'win32',
+      env: { ...process.env, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming') },
+      portFile: join(dir, 'missing-port'),
+      logger: silentLogger,
+    });
+    await exitPromise;
+    assert.equal(unRes.removedPluginDir, true);
+    assert.equal(existsSync(paths.pluginDir), false);
+    assert.equal(existsSync(paths.pidFile), false);
+  } finally {
+    if (dummySidecar && dummySidecar.exitCode === null) {
+      try {
+        dummySidecar.kill();
+      } catch {}
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

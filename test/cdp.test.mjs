@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -13,6 +15,7 @@ import {
   listPages,
   readPort,
 } from '../src/cdp.js';
+import { MiniWebSocket } from '../src/net.js';
 import { injectOnce, parseCliArgs, removeOnce, startWatch } from '../src/runner.js';
 import { startMockCdpServer } from './helpers/mock-cdp.mjs';
 import { createMockAntigravityPage } from './helpers/mock-dom.mjs';
@@ -594,5 +597,91 @@ test('isAntigravityAppUrl 与页面端二次防护严格排除外部网页与 if
     assert.ok(warnings.length >= 2);
   } finally {
     await server.close();
+  }
+});
+
+test('MiniWebSocket 关闭竞态与缓冲复位安全，startWatch.stop 不误删新进程覆写的 .watch.pid', async () => {
+  // 1. 单包多帧中第 1 帧同步关闭连接时，不解析第 2 帧且正确复位 _buffered
+  const makeServerTextFrame = (text) => {
+    const body = Buffer.from(text, 'utf8');
+    return Buffer.concat([Buffer.from([0x81, body.length]), body]);
+  };
+  const wsSockets = new Set();
+  const wsServer = createServer();
+  let delayedSocketRef = null;
+  wsServer.on('upgrade', (req, socket) => {
+    wsSockets.add(socket);
+    socket.on('close', () => wsSockets.delete(socket));
+    const key = req.headers['sec-websocket-key'];
+    const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+    const writeHandshake = () => {
+      if (socket.destroyed) return;
+      socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+    };
+    if (req.url === '/multi-frame') {
+      writeHandshake();
+      socket.write(Buffer.concat([makeServerTextFrame('first'), makeServerTextFrame('second')]));
+    } else if (req.url === '/delayed') {
+      delayedSocketRef = socket;
+      setTimeout(writeHandshake, 40);
+    }
+  });
+  await new Promise((resolve) => wsServer.listen(0, '127.0.0.1', resolve));
+  const wsPort = wsServer.address().port;
+
+  try {
+    const received = [];
+    await new Promise((resolve, reject) => {
+      const ws = new MiniWebSocket(`ws://127.0.0.1:${wsPort}/multi-frame`);
+      ws.addEventListener('message', (ev) => {
+        received.push(ev.data);
+        ws.close();
+      });
+      ws.addEventListener('error', (ev) => reject(ev.error || new Error(ev.message)));
+      ws.addEventListener('close', () => {
+        assert.equal(ws._buffered, 0);
+        resolve();
+      });
+    });
+    assert.deepEqual(received, ['first']);
+
+    // 握手未完成即 close 时不复活、不触发 open
+    let openedAfterClose = false;
+    await new Promise((resolve) => {
+      const ws2 = new MiniWebSocket(`ws://127.0.0.1:${wsPort}/delayed`);
+      ws2.addEventListener('open', () => {
+        openedAfterClose = true;
+      });
+      ws2.addEventListener('close', resolve);
+      ws2.close();
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(openedAfterClose, false);
+    assert.equal(delayedSocketRef ? delayedSocketRef.destroyed || delayedSocketRef.closed : true, true);
+  } finally {
+    for (const sock of wsSockets) sock.destroy();
+    await new Promise((r) => wsServer.close(r));
+  }
+
+  // 2. startWatch.stop 仅清理自己拥有的 .watch.pid
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-pid-owner-'));
+  const pidFile = join(dir, '.watch.pid');
+  const portFile = join(dir, 'DevToolsActivePort');
+  try {
+    const watcher = await startWatch({
+      rootDir: ROOT,
+      portFile,
+      pidFile,
+      logger: { log: () => {}, warn: () => {}, error: () => {} },
+    });
+    assert.equal(readFileSync(pidFile, 'utf8').trim(), String(process.pid));
+    writeFileSync(pidFile, '999999\n', 'utf8');
+    await watcher.stop();
+    assert.equal(existsSync(pidFile), true, '新进程覆写 PID 后，旧进程 stop 不应误删文件');
+    assert.equal(readFileSync(pidFile, 'utf8').trim(), '999999');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

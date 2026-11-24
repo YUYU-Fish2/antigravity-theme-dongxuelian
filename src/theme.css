@@ -648,7 +648,23 @@ body.theme-light [data-testid="builtin-browser-pane"] > :first-child:not([data-b
   border-bottom: 1px solid rgba(44, 66, 104, 0.10) !important;
 }
 
-body.theme-light [data-testid="builtin-browser-pane"] :is(input, [role="combobox"]) {
+/* 地址栏外层胶囊用纸白底，保留内部 browser-url-input 的透明背景与非聚焦 text-transparent（避免与 browser-url-display 重叠） */
+body.theme-light [data-testid="builtin-browser-pane"] [data-testid="browser-omnibox-pill"] {
+  background-color: var(--dxl-paper-card) !important;
+  border-color: var(--dxl-border-soft) !important;
+}
+
+body.theme-light [data-testid="builtin-browser-pane"] [data-testid="browser-omnibox-pill"]:focus-within {
+  background-color: var(--dxl-paper-card) !important;
+  border-color: var(--dxl-accent) !important;
+  box-shadow: 0 0 0 1px rgba(83, 107, 158, 0.25) !important;
+}
+
+body.theme-light [data-testid="builtin-browser-pane"] [data-testid="browser-url-input"]:not(.text-transparent) {
+  color: var(--dxl-ink-primary) !important;
+}
+
+body.theme-light [data-testid="builtin-browser-pane"] :is(input, [role="combobox"]):not([data-testid="browser-url-input"]):not(.text-transparent) {
   background-color: var(--dxl-paper-card) !important;
   color: var(--dxl-ink-primary) !important;
   border-color: var(--dxl-border-soft) !important;

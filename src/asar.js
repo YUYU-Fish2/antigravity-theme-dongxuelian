@@ -108,7 +108,7 @@ function findAsarFileNode(header, relPath) {
  */
 export function readAsarEntryBuffer(archive, relPath) {
   const node = findAsarFileNode(archive.header, relPath);
-  if (!node || node.unpacked) {
+  if (!node || node.unpacked || typeof node.link === 'string') {
     return null;
   }
   const offset = Number(node.offset);
@@ -173,7 +173,7 @@ export function buildAsarArchive(archive, overrides = new Map()) {
         nextOffset += buf.length;
         continue;
       }
-      if (child?.unpacked) {
+      if (child?.unpacked || typeof child?.link === 'string') {
         nextFiles[name] = { ...child };
         continue;
       }
@@ -599,9 +599,15 @@ export async function unpatchAppAsar(options = {}) {
   const currentMain = readAsarEntryBuffer(currentArchive, mainEntry)?.toString('utf8') || '';
   const patchedNow = isMainJsPatched(currentMain);
 
-  if (!patchedNow && !existsSync(backupPath)) {
-    logger.log(`[冬雪莲] ${foundPath} 未检测到补丁痕迹，无需还原。`);
-    return { unpatched: true, restoredFrom: 'none', asarPath: foundPath, removedBackup: false };
+  if (!patchedNow) {
+    const removedBackup = existsSync(backupPath);
+    if (removedBackup) {
+      unlinkQuietly(backupPath);
+      logger.log(`[冬雪莲] ${foundPath} 未检测到补丁痕迹，已清理残留备份文件：${backupPath}`);
+    } else {
+      logger.log(`[冬雪莲] ${foundPath} 未检测到补丁痕迹，无需还原。`);
+    }
+    return { unpatched: true, restoredFrom: 'none', asarPath: foundPath, removedBackup };
   }
 
   let restoredFrom = 'strip';

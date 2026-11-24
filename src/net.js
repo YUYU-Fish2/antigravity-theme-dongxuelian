@@ -170,6 +170,10 @@ export class MiniWebSocket {
   }
 
   _onUpgrade(res, socket, head) {
+    if (this.readyState !== 0) {
+      socket.destroy();
+      return;
+    }
     if (res.headers['sec-websocket-accept'] !== this._expectedAccept) {
       socket.destroy();
       this._fail(new Error('WebSocket 握手校验失败（Sec-WebSocket-Accept 不匹配）'));
@@ -188,9 +192,10 @@ export class MiniWebSocket {
   }
 
   _onData(chunk) {
+    if (this.readyState !== 1) return;
     this._chunks.push(chunk);
     this._buffered += chunk.length;
-    while (this._buffered >= 2) {
+    while (this._buffered >= 2 && this.readyState === 1) {
       const buf = this._chunks.length === 1 ? this._chunks[0] : Buffer.concat(this._chunks, this._buffered);
       this._chunks = [buf];
       const b0 = buf[0];
@@ -294,6 +299,7 @@ export class MiniWebSocket {
     this.readyState = 3;
     clearTimeout(this._closeTimer);
     this._chunks = [];
+    this._buffered = 0;
     this._fragments = [];
     this._emit('close', {});
     this._listeners.clear();

@@ -252,7 +252,7 @@ export function createI18nController(dict, version, restoreDomFn) {
 
   // 保护用户输入、Markdown AI 正文、代码块、终端、编辑器、文件树文件名、分支名、语音转写与批注正文及第三方监测插件不被汉化改写
   const CONTAINER_EXCLUDE_SELECTOR =
-    'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], .md-divider-spacing, [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip, [data-ag-pulse-bar], [id^="ag-pulse-"], [data-testid="file-tree-node-icon"] + *, [data-testid="file-title-name"], [data-testid="entity-pill"], [data-testid="branch-option"], [data-testid="branch-pill-label"], [data-testid="branch-repo-label"], [data-testid="live-transcript"], [data-testid="comment-card-text"], [data-testid="pill-comment-anchor-text"], [data-testid="lsp-hover-body"], [data-testid="lsp-hover-signature"], [data-testid="webview-download-filename"], [data-testid="background-task-command"], [data-testid="automation-instructions-markdown"]';
+    'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], .md-divider-spacing, [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid^="conversation-row-"] a[href^="/c/"], [data-testid^="conversation-row-"] span.truncate, a[data-testid="breadcrumb-segment"][href^="/c/"], .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, #ag-live-metrics-tooltip, [data-ag-pulse-bar], [id^="ag-pulse-"], [data-testid="file-tree-node-icon"] + *, [data-testid="file-title-name"], [data-testid="entity-pill"], [data-testid="branch-option"], [data-testid="branch-pill-label"], [data-testid="branch-repo-label"], [data-testid="live-transcript"], [data-testid="voice-user-message"], [data-testid="live-user-turn"], [data-testid="transcript-line-text"], [data-testid="voice-transcript-summary-lead"], [data-testid="voice-transcript-summary-point"], [data-testid="side-question-followup-user"], [data-testid="side-question-tab-header-name"], [data-testid="subagent-tab-header-title"], [data-testid="coordinator-card-title"], [data-testid="coordinator-card-latest-line"], [data-testid="coordinator-hover-card-title"], [data-testid="coordinator-hover-card-description"], [data-testid="sidebar-agent-hover-card-title"], [data-testid="sidebar-agent-hover-card-description"], [data-testid="automation-name"], [data-testid="automation-error"], [data-testid="automation-last-run-error"], [data-testid="comment-card-text"], [data-testid="pill-comment-anchor-text"], [data-testid="lsp-hover-body"], [data-testid="lsp-hover-signature"], [data-testid="lsp-reference-item"], [data-testid="lsp-hover-tag-name"], [data-testid="webview-download-filename"], [data-testid="background-task-command"], [data-testid="automation-instructions-markdown"], [data-testid="trigger-cel-catalog"] code, [data-testid="trigger-cel-functions"], [data-testid="browser-url-display"], [data-testid="url-security-origin"], [data-testid="url-security-host"], [data-testid="browser-autocomplete-option"], [data-testid="external-link-confirm-uri"], [data-testid="webview-prompt-origin"], [data-testid="webview-prompt-message"], [data-testid="browser-site-data-site"] .truncate, [data-testid="builtin-browser-download-dir-value"], [data-testid="browser-cert-error-code"], [data-testid="terminal-surface"] .xterm, [data-testid="terminal-tab-surface"] .xterm, [data-testid="bottom-terminal-panel-active-shell"], [data-testid^="terminal-cwd-"], [data-testid="setup-script-output"], [data-testid="sidecar-logs-content"] pre, [data-testid^="csv-data-row-"], [data-testid^="csv-header-"], [data-testid="pdf-text-layer"], [data-testid="markdown-frontmatter"], [data-testid="planner-response-debug-error"], [data-testid="ssh-host-project-item"], [data-testid="ssh-config-file-name"], [data-testid="project-selector-item"] .truncate, [data-testid="project-selector-github-repo-item"], [data-testid^="github-repo-option-"], [data-testid^="gcp-project-combobox-option-"], [data-testid="jj-worktree-selector-label"], [data-testid="jj-previous-worktree-option"], [data-testid="permission-trigger-command"] .font-mono, [data-testid="declared-permissions-arg"] label, [data-testid="mcp-config-variable"] label, [data-testid="mcp-server-row"] .font-medium, [data-testid="swarm-member-chip"], [data-testid="swarm-member-workspace"], [data-testid="swarm-member-activity"], [data-testid="swarm-running-activity"]';
   const TEXT_EXCLUDE_SELECTOR =
     `textarea, input, [contenteditable="true"], [data-testid="conversation-navigator-turn"], ${CONTAINER_EXCLUDE_SELECTOR}`;
 
@@ -346,6 +346,7 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^(\d+)\s+MCP servers?\s+failed to start$/i, '$1 个 MCP 服务器启动失败'],
     [/^(\d+)\s+seconds?$/i, '$1 秒'],
     [/^(\d+)\s+Drafts?$/i, '$1 个草稿'],
+    [/^(\d+)\s+cookies?$/i, '$1 个 Cookie'],
     [/^(\d+(?:\.\d+)?)x\s+playback\s+speed$/i, '$1 倍播放速度'],
   ];
 
@@ -382,6 +383,20 @@ export function createI18nController(dict, version, restoreDomFn) {
   const RE_THOUGHT_FOR = /^Thought for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
   const RE_THINKING_FOR = /^Thinking for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
   const RE_USING_BROWSER_SEC = /^Using browser\s*\((\d+)s\)$/i;
+  const RE_USING_BROWSER_DETAIL_SEC = /^Using browser\s*·\s*([^\r\n]+?)\s*\((\d+)s\)$/i;
+  const RE_USING_BROWSER_DETAIL = /^Using browser\s*·\s*([^\r\n]+)$/i;
+  const RE_WORKING_SEC = /^Working\s*·\s*(\d+)s$/i;
+  const RE_WAITING_APPROVAL_TO = /^Waiting\s+for\s+approval\s+to\s+([^:\r\n]{1,60}?)(?::\s*(.+))?$/i;
+  const APPROVAL_ACTION_MAP = {
+    access: '访问',
+    read: '读取',
+    write: '写入',
+    run: '运行',
+    'run (unsandboxed)': '运行（沙箱外）',
+    use: '使用',
+    'download from': '从以下来源下载',
+    'grant administrator access for': '授予管理员权限',
+  };
   const RE_RUNNING_FOR = /^Running\s+for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
   const RE_KEY_QUEUES_AFTER = /^(\S+)\s+Queues after the turn$/i;
   const RE_KEY_SENDS_IMMEDIATELY = /^(\S+)\s+Sends immediately$/i;
@@ -411,6 +426,8 @@ export function createI18nController(dict, version, restoreDomFn) {
     'edited files and artifacts': '已编辑文件与 Artifact',
   };
   const RE_EPHEMERAL_COUNT_CLAUSE = /^(explored|edited|ran)\s+(\d+)\s+(files?|artifacts?|commands?)$/i;
+  const RE_EPHEMERAL_DUAL_COUNT_CLAUSE =
+    /^(explored|edited)\s+(\d+)\s+(files?)\s+and\s+(\d+)\s+(artifacts?)$/i;
   const RE_EPHEMERAL_ACTIVE = /^(Editing|Reading|Listing|Searching)\s+(.+)$/;
   const EPHEMERAL_VERB_MAP = { Editing: '正在编辑', Reading: '正在读取', Listing: '正在列出', Searching: '正在搜索' };
   const EPHEMERAL_NOUN_MAP = {
@@ -495,9 +512,13 @@ export function createI18nController(dict, version, restoreDomFn) {
   const translateEphemeralClause = (clause) => {
     const low = clause.trim().toLowerCase();
     if (EPHEMERAL_CLAUSE_MAP[low]) return EPHEMERAL_CLAUSE_MAP[low];
+    const vMap = { explored: '已探索', edited: '已编辑', ran: '已运行' };
+    const mDual = low.match(RE_EPHEMERAL_DUAL_COUNT_CLAUSE);
+    if (mDual) {
+      return `${vMap[mDual[1]]} ${mDual[2]} 个文件与 ${mDual[4]} 个 Artifact`;
+    }
     const mCount = low.match(RE_EPHEMERAL_COUNT_CLAUSE);
     if (mCount) {
-      const vMap = { explored: '已探索', edited: '已编辑', ran: '已运行' };
       const nMap = {
         file: '个文件',
         files: '个文件',
@@ -598,6 +619,11 @@ export function createI18nController(dict, version, restoreDomFn) {
   // 新版 UI 高频通用动态模板规则（精确句式/前缀锚定，避免误伤常规英语正文）
   const GENERAL_DYNAMIC_RULES = [
     [/^Available\s+AI\s+Credits:\s*(.+)$/i, '可用 AI 点数：$1'],
+    [/^Allowed\s+in\s+([^\r\n]{1,120})$/i, '已在 $1 中允许'],
+    [/^All\s+(\d+)\s+will\s+be\s+revoked\.\s+The\s+plugin\s+will\s+ask\s+before\s+doing\s+this\s+again\.$/i, '全部 $1 项权限将被撤销。此后该插件执行相关操作前将重新询问您。'],
+    [/^All\s+changes\s+since\s+(.+)$/i, '自 $1 以来的全部更改'],
+    [/^Add\s*\((\d+)\)$/i, '添加 ($1)'],
+    [/^Automation\s+(\d+)$/i, '自动化任务 $1'],
     [/^Auth\s+code\s+for\s+(.+)$/i, '$1 的授权码'],
     [/^Add\s+bundle\s+(.+)$/i, '添加合集包 $1'],
     [/^App\s+view\s+for\s+(.+)$/i, '$1 的应用视图'],
@@ -609,26 +635,55 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Blocked\s+external\s+popup\s+navigation\s+to\s+"(.+)"$/, '已拦截外部弹窗跳转至“$1”'],
     [/^Blocked\s+popup\s+navigation\s+to\s+unapproved\s+domain:\s*(.+)$/, '已拦截前往未授权域名的弹窗：$1'],
     [/^Blocked\s+cross-origin\s+subframe\s+"(.+)"$/, '已拦截跨源子框架“$1”'],
+    [/^Browser\s+task:\s*"([^"\r\n]*)"$/i, '浏览器任务：“$1”'],
     [/^Build\s+with\s+(.+?)\s+Plugins$/i, '使用 $1 插件构建'],
     [/^Can['’]t\s+create\s+this\s+path\s*(?:\u2014|--|-)\s*[“"](.+?)[”"]\s+is\s+a\s+file,\s+not\s+a\s+folder\.$/, '无法创建此路径——“$1”是文件而非文件夹。'],
     [/^Cannot\s+add\s+folder:\s*"(.+?)"\s+is\s+not\s+a\s+valid\s+folder\s+location\.$/, '无法添加目录：“$1”不是有效的文件夹位置。'],
+    [/^Comment\s*\((\d+)\)$/i, '评论 ($1)'],
     [/^Connected\s+to\s+(.+)$/, '已连接至 $1'],
+    [/^Coordinator\s*·\s*(\d+)\s+of\s+(\d+)\s+done(.*)$/i, '协调器 · 已完成 $1 / $2$3'],
     [/^Couldn't\s+connect\s+to\s+(.+)$/, '无法连接至 $1'],
     [/^Couldn't\s+(\w+)\s+conversation$/i, '无法对对话执行 $1 操作'],
     [/^Connect\s+GitHub:\s*(.+)$/, '连接 GitHub：$1'],
     [/^Created\s+automation\s+"(.+)"\.$/, '已创建自动化任务“$1”。'],
+    [/^Customize\s+your\s+experience\s+across\s+the\s+agent,\s+plugins,\s+and\s+product\s+from\s+the\s+settings\s+and\s+marketplace\.\s+We\s+won['’]t\s+show\s+you\s+ads\s+or\s+let\s+advertisers\s+influence\s+what\s+([^\r\n]{1,40}?)\s+says\.$/i, '您可在设置与插件市场中自定义 Agent、插件及产品的体验。我们不会向您展示广告，也不会让广告主影响 $1 的输出。'],
     [/^Configure\s+([A-Z][\w .:-]{0,60})$/, '配置 $1'],
     [/^Deleted\s+"(.+)"\.$/, '已删除“$1”。'],
     [/^Detached\s+at\s+(.+)$/, '游离于 $1'],
+    [/^Dismissed:\s*(.+)$/i, '已忽略：$1'],
     [/^Duplicate\s+(.+?)\s+name$/i, '$1名称重复'],
     [/^Enabled\s+"(.+)"\.$/, '已启用“$1”。'],
     [/^Enlarged\s+media:\s*(.+)$/i, '放大媒体：$1'],
+    [/^Error\s+signing\s+in\s+to\s+MCP\s+server:\s*(.+)$/i, '登录 MCP 服务器出错：$1'],
+    [/^Error\s+starting\s+sign-in:\s*(.+)$/i, '启动登录出错：$1'],
+    [/^Error\s+deleting\s+MCP\s+server:\s*(.+)$/i, '删除 MCP 服务器出错：$1'],
+    [/^Error\s+disconnecting\s+MCP\s+server:\s*(.+)$/i, '断开 MCP 服务器出错：$1'],
+    [/^Error\s+installing\s+MCP\s+server:\s*(.+)$/i, '安装 MCP 服务器出错：$1'],
+    [/^Error\s+refreshing\s+MCP\s+servers:\s*(.+)$/i, '刷新 MCP 服务器出错：$1'],
+    [/^Error\s+restarting\s+MCP\s+server:\s*(.+)$/i, '重启 MCP 服务器出错：$1'],
+    [/^Error\s+toggling\s+MCP\s+server:\s*(.+)$/i, '切换 MCP 服务器状态出错：$1'],
+    [/^Error\s+toggling\s+tool:\s*(.+)$/i, '切换工具状态出错：$1'],
+    [/^Error\s+submitting\s+auth\s+code:\s*(.+)$/i, '提交授权码出错：$1'],
     [/^Error:\s*(.+)$/, '错误：$1'],
+    [/^Everyone\s+in\s+#([a-z0-9_-]+)$/i, '#$1 中的全体成员'],
+    [/^Exporting\s+(\d+)%$/i, '正在导出 $1%'],
+    [/^Exporting\s+([^\r\n]+?)(?:…|\.\.\.)$/i, '正在导出 $1…'],
+    [/^Exported\s+([^\r\n(]+?)\s*\(([^)\r\n]+)\)$/i, '已导出 $1 ($2)'],
     [/^Fold\s+lines\s+(\d+)-(\d+)$/i, '折叠第 $1–$2 行'],
     [/^Failed\s+to\s+update\s+"(.+)"$/, '更新“$1”失败'],
     [/^Failed\s+to\s+delete\s+"(.+)"$/, '删除“$1”失败'],
     [/^Failed\s+to\s+start\s+"(.+)"\.$/, '启动“$1”失败。'],
     [/^Failed\s+to\s+save\s+"(.+)"$/, '保存“$1”失败'],
+    [/^Failed\s+to\s+load\s+annotations\s+for\s+page\s+(\d+):\s*(.+)$/i, '加载第 $1 页批注失败：$2'],
+    [/^Failed\s+to\s+load\s+page\s+(\d+):\s*(.+)$/i, '加载第 $1 页失败：$2'],
+    [/^Failed\s+to\s+remove\s+plugin:\s*(.+)$/i, '移除插件失败：$1'],
+    [/^Failed\s+to\s+toggle\s+plugin:\s*(.+)$/i, '切换插件状态失败：$1'],
+    [/^Failed\s+to\s+save\s+configuration:\s*(.+)$/i, '保存配置失败：$1'],
+    [/^Failed\s+to\s+write\s+MCP\s+config:\s*(.+)$/i, '写入 MCP 配置失败：$1'],
+    [/^Failed\s+to\s+remove\s+agent:\s*(.+)$/i, '移除 Agent 失败：$1'],
+    [/^Failed\s+to\s+update\s+agent:\s*(.+)$/i, '更新 Agent 失败：$1'],
+    [/^Failed\s+to\s+send\s+interaction:\s*(.+)$/i, '发送交互失败：$1'],
+    [/^Failed\s+to\s+send\s+response:\s*(.+)$/i, '发送回复失败：$1'],
     [/^Failed\s+to\s+save\s+project\s+settings:\s*(.+)$/, '保存项目设置失败：$1'],
     [/^Failed\s+to\s+save\s+project\s+permissions:\s*(.+)$/, '保存项目权限失败：$1'],
     [/^Failed\s+to\s+save\s+project\s+Google3\s+configuration:\s*(.+)$/, '保存项目 Google3 配置失败：$1'],
@@ -643,41 +698,83 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Failed\s+to\s+create\s+(.+)$/, '创建 $1 失败'],
     [/^Failed\s+to\s+(\w+)\s+conversation$/i, '对对话执行 $1 操作失败'],
     [/^Generation\s+Steps\s*\((\d+)\)$/i, '生成步骤 ($1)'],
+    [/^GIF\s+ready\s*\(([^)\r\n]+)\)\s*—\s*right-click\s+image\s+to\s+save\.$/i, 'GIF 已就绪 ($1) — 右键点击图片即可保存。'],
+    [/^Go\s+to\s+#(\d+)\s*\(([^)\r\n]+)\)$/i, '跳转至 #$1 ($2)'],
+    [/^Go\s+to\s+#(\d+)$/i, '跳转至 #$1'],
     [/^Help\s+us\s+improve\s+(.+)\.$/, '帮助我们改进 $1。'],
     [/^Install\s+folder\s+"(.+?)"\s+is\s+already\s+in\s+use$/, '安装目录“$1”已被占用'],
+    [/^Invoked\s+subagent:\s*(.+)$/i, '已调用子 Agent：$1'],
     [/^Keep:\s*(.+)$/, '保留：$1'],
+    [/^Listed\s+directory\s+(.+)$/i, '已列出目录 $1'],
+    [/^Live\s+preview\s+unavailable\s*·\s*(.+)$/i, '实时预览不可用 · $1'],
+    [/^Loading\s+earlier\s+posts(?:…|\.\.\.)\s*\((\d+)\s+older\)$/i, '正在加载更早的发言…（还有 $1 条）'],
     [/^Low\s+contrast\s+ratio\s+\(([\d.]+:1)\)\.\s*Text\s+may\s+be\s+hard\s+to\s+read\.$/, '对比度过低 ($1)，文字可能难以辨认。'],
     [/^Manage\s+(.+?)\s+app\s+settings\.$/, '管理 $1 应用设置。'],
+    [/^MCP\s+server\s+(.+?)\s+requires\s+authentication$/i, 'MCP 服务器 $1 需要身份认证'],
     [/^More\s+actions\s+for\s+(.+)$/i, '$1 的更多操作'],
     [/^Move\s+to\s+Group:\s*(.+)$/i, '移至分组：$1'],
     [/^Message\s+from\s+(.+)$/i, '来自 $1 的消息'],
     [/^Microphone\s+blocked\.\s+Allow\s+in\s+(.+)\.$/, '麦克风已禁用。请在 $1 中允许访问。'],
     [/^Microphone\s+access\s+for\s+(.+?)\s+was\s+denied\.\s*Quit\s+and\s+reopen\s+the\s+app\s+to\s+be\s+asked\s+again\.$/, '$1 的麦克风权限已被拒绝。退出并重新打开应用即可重新询问授权。'],
+    [/^No\s+matching\s+languages\s+for\s+"([^"\r\n]*)"$/i, '没有匹配“$1”的语言'],
+    [/^No\s+server\s+is\s+listening\s+on\s+port\s+(\d+)\s+inside\s+the\s+remote\s+workspace\.\s*Start\s+it,\s+or\s+ask\s+the\s+agent\s+to,\s+then\s+retry\.$/i, '远程工作区的端口 $1 上没有正在监听的服务。请启动服务（或让 Agent 启动）后重试。'],
+    [/^Nothing\s+is\s+running\s+on\s+port\s+(\d+)$/i, '端口 $1 上没有正在运行的服务'],
     [/^Open\s+Subagent:\s*(.+)$/i, '打开子 Agent：$1'],
     [/^Open\s+(.+?)\s+skill$/i, '打开 $1 技能'],
     [/^Open\s+the\s+(.+?)\s+plugin$/i, '打开 $1 插件'],
     [/^Open\s+in\s+([A-Z][\w .:-]{0,60})$/, '在 $1 中打开'],
+    [/^Opened\s+browser:\s*(.+)$/i, '已打开浏览器：$1'],
     [/^Playback\s+speed\s+([\d.]+)x$/i, '播放速度 $1x'],
+    [/^Post\s+#(\d+)\s+was\s+not\s+found$/i, '未找到 #$1 号发言'],
     [/^Preview\s+unavailable\s*(?:\u2014|--|-)\s*(.+)$/i, '预览不可用 — $1'],
+    [/^Proceed\s+with\s+implementation\s+plan\s+and\s+(\d+)\s+comments?$/i, '按实施计划及 $1 条评论继续'],
+    [/^Publish\s+([^\r\n]+?)\s+to\s+origin$/i, '将 $1 发布到 origin'],
+    [/^Push\s+(\d+)\s+commits?\s+to\s+([^\r\n]+)$/i, '推送 $1 个提交至 $2'],
+    [/^Read\s+URL:\s*(.+)$/i, '已读取 URL：$1'],
     [/^Receive\s+product\s+updates,\s+tips,\s+and\s+promotions\s+from\s+Google\s+(.+?)\s+via\s+email\.$/, '通过电子邮件接收来自 Google $1 的产品更新、使用技巧与活动资讯。'],
+    [/^Reconnecting\s+to\s+([^\r\n]+?)(?:…|\.\.\.)$/i, '正在重新连接至 $1…'],
+    [/^Reset\s+(\d+)\s+overrides?$/i, '重置 $1 项覆盖'],
     [/^Restarted\s+"(.+)"\.$/, '已重启“$1”。'],
+    [/^Restarting\s+the\s+Antigravity\s+server\s+on\s+([^\r\n]+?)(?:…|\.\.\.)$/i, '正在重启 $1 上的 Antigravity 服务…'],
+    [/^Resume\s+the\s+conversation\s+to\s+start\s+its\s+workspace\s+again,\s+then\s+start\s+the\s+server\s+on\s+port\s+(\d+)\s+and\s+retry\.$/i, '恢复此对话以重新启动其工作区，然后在端口 $1 上启动服务并重试。'],
+    [/^Retry\s+loading\s+(\d+)\s+earlier\s+posts?$/i, '重试加载更早的 $1 条发言'],
+    [/^Review\s+permissions\s+for\s+(.+)$/i, '审查 $1 的权限'],
     [/^Run\s+(.+?)\s+now$/i, '立即运行 $1'],
     [/^Remove\s+(.+?)\s+from\s+Recent$/i, '从最近使用中移除 $1'],
     [/^Resume\s+(\d+)\s+comment\s+drafts?$/i, '恢复 $1 条评论草稿'],
     [/^Review\s+(.+?)\s+before\s+installing$/i, '安装前请先审阅 $1'],
+    [/^Searched\s+web:\s*"([^"\r\n]*)"$/i, '已搜索网页：“$1”'],
+    [/^Self\s*\(([^)\r\n]{1,60})\)$/i, '自身 ($1)'],
+    [/^Send\s+all\s*\((\d+)\)$/i, '全部发送 ($1)'],
+    [/^Set\s+up\s+(.+)$/i, '设置 $1'],
+    [/^Show\s+(\d+)\s+earlier\s+posts?\s*\((\d+)\s+older\)$/i, '显示前 $1 条更早发言（共 $2 条）'],
+    [/^Showing\s+first\s+(\d+)\s+references$/i, '显示前 $1 个引用'],
+    [/^Signed\s+in:\s*(.+)$/i, '已登录：$1'],
     [/^SSH:\s*(.+)$/, 'SSH：$1'],
+    [/^Steps\s+to\s+Reproduce:\s*(.+)$/i, '复现步骤：$1'],
     [/^Stop\s+(.+?)\?$/, '是否停止 $1？'],
-    [/^Triggered\s+(.+)$/, '已触发 $1'],
+    [/^Swarm\s+start\s*·\s*(\d+)\s+members?$/i, 'Swarm 启动 · $1 名成员'],
     [/^The\s+browser\s+blocked\s+the\s+download\s+of\s+(.+)$/, '浏览器已拦截下载 $1'],
+    [/^The\s+certificate\s+was\s+rejected\s*\(([^)\r\n]+)\)\.?$/i, '证书被拒绝 ($1)。'],
+    [/^The\s+narrator's\s+last\s+step\s+failed:\s*(.+)$/i, '纪要员上一步失败：$1'],
+    [/^The\s+preview\s+did\s+not\s+respond\s+on\s+port\s+(\d+)\.?$/i, '端口 $1 上的预览未响应。'],
     [/^The\s+(.+?)\s+MCP\s+server\s+requires\s+configuration\s+parameters\s+before\s+it\s+can\s+be\s+started\.$/, '$1 MCP 服务器在启动前需要配置参数。'],
     [/^The\s+folder\s+[“"](.+?)[”"]\s+does\s+not\s+exist\.\s*Would\s+you\s+like\s+to\s+create\s+it\?$/, '文件夹“$1”不存在，是否立即创建？'],
+    [/^Thinking\s*\((\d+)s\)(?:…|\.\.\.)?$/i, '正在思考 ($1s)…'],
     [/^This\s+window's\s+agents,\s+files,\s+and\s+terminals\s+are\s+on\s+(.+)\.$/, '此窗口中的 Agent、文件与终端均运行于 $1。'],
+    [/^Triggered\s+(.+)$/, '已触发 $1'],
+    [/^UI\s+Plugin\s+(\d+)$/i, 'UI 插件 $1'],
     [/^Using\s+default\s+(.+?)\s+name$/, '使用默认 $1 名称'],
     [/^Unfold\s+lines\s+(\d+)-(\d+)$/i, '展开第 $1–$2 行'],
+    [/^Viewed\s+([^:\r\n]+):(\d+)-(\d+)$/i, '已查看 $1:$2-$3'],
     [/^Voice\s+speed,\s*(.+)$/i, '语音语速，$1'],
+    [/^Waiting\s+on\s+@([a-z0-9_-]+)$/i, '正在等待 @$1'],
+    [/^Working\s+for\s+@([a-z0-9_-]+)$/i, '正在为 @$1 执行'],
     [/^When\s+toggled\s+on,\s*(.+?)\s+collects\s+usage\s+data\s+to\s+help\s+Google\s+enhance\s+performance\s+and\s+features\.$/, '开启后，$1 会收集使用数据，帮助 Google 改进产品性能与功能。'],
     [/^When\s+toggled\s+on,\s*(.+?)\s+will\s+use\s+your\s+AI\s+credits\s+to\s+fulfill\s+model\s+requests\s+once\s+you're\s+out\s+of\s+model\s+quota\.\s*\1\s+will\s+always\s+use\s+your\s+model\s+quota\s+first\s+before\s+using\s+AI\s+credits\.$/, '开启后，当模型配额耗尽时，$1 将使用您的 AI 点数继续完成模型请求；在此之前始终优先消耗模型配额。'],
     [/^Zoom\s+([\d.]+)%,\s*reset\s+to\s+fit$/i, '缩放 $1%，点击恢复适应窗口'],
+    [/^⚠️\s*Failed\s+to\s+render\s+Mermaid\s+diagram:\s*(.+)$/i, '⚠️ 渲染 Mermaid 图表失败：$1'],
+    [/^⚠️\s*Failed\s+to\s+render\s+LaTeX:\s*(.+)$/i, '⚠️ 渲染 LaTeX 公式失败：$1'],
     [/^[“"](.+?)[”"]\s+isn['’]t\s+a\s+valid\s+folder\s+name\.$/, '“$1”不是有效的文件夹名称。'],
     [/^(.+?)\.\s+Starting\s+in\s+local\s+workspace\.$/, '$1，正在本地工作区中启动。'],
     [/^(.+?)\s+\(Experimental\)$/, '$1（实验性）'],
@@ -691,9 +788,53 @@ export function createI18nController(dict, version, restoreDomFn) {
 
   // 仅针对按钮与控件属性（title / aria-label / placeholder）的动态前缀动作规则，防止正文误命中
   const ATTR_DYNAMIC_RULES = [
+    [/^Open\s+conversation\s+([A-Za-z0-9_-]+)$/i, '打开对话 $1'],
     [/^Open\s+(.+)$/, '打开 $1'],
     [/^Delete\s+(.+)$/, '删除 $1'],
     [/^Remove\s+(.+)$/, '移除 $1'],
+    [/^Dismiss:\s*(.+)$/i, '忽略：$1'],
+    [/^Revoke\s+all:\s*(.+)$/i, '全部撤销：$1'],
+    [/^Revoke:\s*(.+)$/i, '撤销：$1'],
+    [/^Applied\s+(.+)$/i, '已应用 $1'],
+    [/^Apply\s+(.+)$/i, '应用 $1'],
+    [/^Authorization\s+code\s+for\s+(.+)$/i, '$1 的授权码'],
+    [/^Disconnect\s+(.+)$/i, '断开 $1'],
+    [/^Reconnect\s+(.+)$/i, '重新连接 $1'],
+    [/^Connect\s+(.+)$/i, '连接 $1'],
+    [/^Make\s+(.+?)\s+the\s+default\s+(.+?)\s+account$/i, '将 $1 设为默认 $2 账号'],
+    [/^New\s+secret\s+for\s+(.+)$/i, '$1 的新密钥'],
+    [/^Secret\s+for\s+a\s+new\s+(.+?)\s+account$/i, '新 $1 账号的密钥'],
+    [/^Secret\s+for\s+(.+)$/i, '$1 的密钥'],
+    [/^Plan,\s*(\d+)\s+of\s+(\d+)\s+steps\s+done$/i, '计划，已完成 $1 / $2 步'],
+    [/^Comment\s+on\s+page\s+(\d+)$/i, '第 $1 页的评论'],
+    [/^Bounding\s+box\s+on\s+page\s+(\d+)$/i, '第 $1 页的选框'],
+    [/^Search\s+match\s+on\s+page\s+(\d+)$/i, '第 $1 页的搜索匹配'],
+    [/^Go\s+to\s+page\s+(\d+)$/i, '跳转到第 $1 页'],
+    [/^Go\s+to\s+slide\s+(\d+)$/i, '跳转到第 $1 张幻灯片'],
+    [/^Page\s+(\d+)\s+failed\s+to\s+load$/i, '第 $1 页加载失败'],
+    [/^Edit\s+comment:\s*(.+)$/i, '编辑评论：$1'],
+    [/^View\s+Diff\s+for\s+(.+)$/i, '查看 $1 的差异'],
+    [/^Downloads,\s*(\d+)%\s+complete$/i, '下载，已完成 $1%'],
+    [/^Show\s+(.+?)\s+in\s+folder$/i, '在文件夹中显示 $1'],
+    [/^Cancel\s+(.+)$/i, '取消 $1'],
+    [/^Copy\s+(.+)$/i, '复制 $1'],
+    [/^Cost\s+summary:\s*(.+)$/i, '费用摘要：$1'],
+    [/^Edit\s+(.+?)\s+name$/i, '编辑$1名称'],
+    [/^Fix\s+with\s+Agent:\s*(.+)$/i, '使用 Agent 修复：$1'],
+    [/^Install\s+(.+)$/i, '安装 $1'],
+    [/^Label\s+for\s+(.+)$/i, '$1 的标签'],
+    [/^More\s+for\s+(.+)$/i, '$1 的更多选项'],
+    [/^Reset\s+(.+?)\s+to\s+default$/i, '将 $1 重置为默认'],
+    [/^Scroll\s+to:\s*(.+?)\s+on\s+page\s+(\d+)$/i, '滚动至第 $2 页：$1'],
+    [/^Stop\s+(\d+)\s+selected$/i, '停止已选的 $1 项'],
+    [/^Stop\s+(.+)$/i, '停止 $1'],
+    [/^Toggle\s+(.+)$/i, '切换 $1'],
+    [/^Account\s+this\s+MCP\s+server\s+uses:\s*(.+)$/i, '此 MCP 服务器使用的账号：$1'],
+    [/^Configure\s+(.+?),\s+values\s+missing$/i, '配置 $1（缺少必填值）'],
+    [/^Add\s+shortcut\s+for\s+(.+)$/i, '为 $1 添加快捷键'],
+    [/^Recording\s+shortcut\s+for\s+(.+?)\.\s*Press\s+keys\s+to\s+bind,\s*Enter\s+to\s+save,\s*Escape\s+to\s+cancel\.$/i, '正在录制 $1 的快捷键。请按键绑定，按 Enter 保存，按 Escape 取消。'],
+    [/^Conversation\s+([A-Za-z0-9_-]+)$/i, '对话 $1'],
+    [/^GitHub:\s*(.+)$/i, 'GitHub：$1'],
   ];
 
   const KEY_SHORTCUT_RULES = [
@@ -785,6 +926,16 @@ export function createI18nController(dict, version, restoreDomFn) {
       const namedHit = formatNamedLimitResets(trimmed);
       if (namedHit !== null) return replaceTrimmed(raw, trimmed, namedHit);
       if (firstUpper === 'W') {
+        if (RE_WORKING_SEC.test(trimmed)) {
+          return replaceTrimmed(raw, trimmed, trimmed.replace(RE_WORKING_SEC, '正在处理 · $1s'));
+        }
+        const mWaitApp = trimmed.match(RE_WAITING_APPROVAL_TO);
+        if (mWaitApp) {
+          const actRaw = mWaitApp[1].trim();
+          const actZh = APPROVAL_ACTION_MAP[actRaw.toLowerCase()] || actRaw;
+          const target = mWaitApp[2] ? mWaitApp[2].trim() : '';
+          return replaceTrimmed(raw, trimmed, `正在等待批准${actZh}${target ? `：${target}` : ''}`);
+        }
         if (RE_WORKED_FOR_UPDATES.test(trimmed)) {
           return replaceTrimmed(
             raw,
@@ -860,6 +1011,12 @@ export function createI18nController(dict, version, restoreDomFn) {
         return replaceTrimmed(raw, trimmed, trimmed.replace(RE_DELETED_RECORDINGS, '已删除 $1 条录音 ($2)'));
       }
     } else if (firstUpper === 'U') {
+      if (RE_USING_BROWSER_DETAIL_SEC.test(trimmed)) {
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_USING_BROWSER_DETAIL_SEC, '正在操作浏览器 · $1 ($2s)'));
+      }
+      if (RE_USING_BROWSER_DETAIL.test(trimmed)) {
+        return replaceTrimmed(raw, trimmed, trimmed.replace(RE_USING_BROWSER_DETAIL, '正在操作浏览器 · $1'));
+      }
       if (RE_USING_BROWSER_SEC.test(trimmed)) {
         return replaceTrimmed(raw, trimmed, trimmed.replace(RE_USING_BROWSER_SEC, '正在操作浏览器 ($1s)'));
       }
@@ -946,6 +1103,10 @@ export function createI18nController(dict, version, restoreDomFn) {
           trimmed,
           trimmed.replace(RE_BASELINE_QUOTA_REFRESH, '您套餐的基础配额将于 $1 刷新。'),
         );
+      }
+      const mPlan = trimmed.match(/^Your\s+plan:\s*(.+)$/i);
+      if (mPlan) {
+        return replaceTrimmed(raw, trimmed, `您的套餐：${mPlan[1].trim()}`);
       }
     } else if (firstUpper === 'H') {
       const mHey = trimmed.match(RE_HOME_HEY_NAME);
@@ -1241,11 +1402,16 @@ export function createI18nController(dict, version, restoreDomFn) {
 
   const flush = () => {
     pending = false;
+    const pendingRaf = rafId;
+    rafId = 0;
+    if (pendingRaf) {
+      const cancel = typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout;
+      cancel(pendingRaf);
+    }
     if (fallbackTimer) {
       clearTimeout(fallbackTimer);
       fallbackTimer = 0;
     }
-    rafId = 0;
     if (dirtyRoots.size === 0) return;
 
     if (dirtyRoots.size > 200) {

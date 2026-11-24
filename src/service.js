@@ -884,14 +884,6 @@ export async function getInstallStatus(options = {}) {
 
   const autostart = await queryAutostart({ rootDir, platform, env, home, execFileImpl });
   const watcherPid = readLiveWatcherPid(paths.pidFile);
-  const effectivePort = options.port ?? autostart.state?.options?.port;
-  const cdp = await probeCdpPages({
-    port: effectivePort,
-    portFile,
-    fetchImpl,
-    timeoutMs: options.timeoutMs ?? 1500,
-  });
-  const appPatch = getAppAsarStatus({ appAsar: options.appAsar, platform, env, home });
   const plugin = getPluginStatus({
     platform,
     env,
@@ -900,6 +892,14 @@ export async function getInstallStatus(options = {}) {
     configFile: options.configFile,
     dataDir: options.dataDir,
   });
+  const effectivePort = options.port ?? autostart.state?.options?.port ?? plugin.settings?.port;
+  const cdp = await probeCdpPages({
+    port: effectivePort,
+    portFile,
+    fetchImpl,
+    timeoutMs: options.timeoutMs ?? 1500,
+  });
+  const appPatch = getAppAsarStatus({ appAsar: options.appAsar, platform, env, home });
 
   if (!options.silent) {
     logger.log('[冬雪莲] 运行状态报告：');

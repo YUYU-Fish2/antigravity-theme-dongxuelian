@@ -97,4 +97,10 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
       css.includes('[data-testid="builtin-browser-pane"]'),
     '缺少窄屏底栏防挤压折行与内置浏览器分屏标签/工具栏打磨规则',
   );
+  assert.ok(
+    css.includes('[data-testid="builtin-browser-pane"] [data-testid="browser-omnibox-pill"]') &&
+      css.includes(':not([data-testid="browser-url-input"]):not(.text-transparent)') &&
+      !/\[data-testid="builtin-browser-pane"\]\s*:is\(input,\s*\[role="combobox"\]\)\s*\{/s.test(css),
+    '内置浏览器地址栏应由外层胶囊承接纸白底，不得强行覆盖 browser-url-input 的 text-transparent 导致与 browser-url-display 重叠',
+  );
 });

@@ -19,6 +19,7 @@ import {
 } from './launch.js';
 import {
   prepareRuntimePayload,
+  readLiveWatcherPid,
   readPackageVersion,
   removeOnce,
   resolveRootPath,
@@ -158,11 +159,12 @@ export function buildPluginPanelHtml() {
   <style>
     :root { color-scheme: light dark; }
     body {
-      margin: 0; padding: 14px;
+      margin: 0; padding: 0;
       background: var(--background, #F7F3EB);
       color: var(--foreground, #2C4268);
       font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
     }
+    .panel { padding: 14px; }
     .card {
       background: var(--card, #FFFDF8);
       border: 1px solid rgba(83, 107, 158, 0.22);
@@ -171,7 +173,7 @@ export function buildPluginPanelHtml() {
       margin-bottom: 12px;
     }
     h1 { font-size: 15px; margin: 0 0 6px; }
-    .muted { color: #5C6578; font-size: 12px; margin: 0; }
+    .muted { color: var(--muted-foreground, #5C6578); font-size: 12px; margin: 0; }
     .badge {
       display: inline-block; padding: 2px 8px; border-radius: 999px;
       font-size: 11px; font-weight: 600;
@@ -192,6 +194,7 @@ export function buildPluginPanelHtml() {
   </style>
 </head>
 <body>
+  <main class="panel">
   <div class="card">
     <div id="badge" class="badge">正在连接...</div>
     <h1>冬雪莲涂鸦主题</h1>
@@ -206,6 +209,7 @@ export function buildPluginPanelHtml() {
       <button id="btn-repair" type="button" class="secondary">自检快捷方式参数</button>
     </div>
   </div>
+  </main>
   <script>
     const apiFetch = (url, init) => (window.sidecar && typeof window.sidecar.fetch === 'function') ? window.sidecar.fetch(url, init) : fetch(url, init);
     const badgeEl = document.getElementById('badge');
@@ -308,8 +312,16 @@ function atomicJson(filePath, value) {
 }
 
 function readPluginEnabled() {
+  if (!existsSync(join(PLUGIN_ROOT, 'plugin.json'))) return false;
+  if (!existsSync(CONFIG_FILE)) return true;
   const cfg = readJson(CONFIG_FILE, {});
-  return cfg.plugins?.[PLUGIN_ID]?.enabled !== false;
+  if (cfg.plugins && typeof cfg.plugins === 'object') {
+    if (!Object.prototype.hasOwnProperty.call(cfg.plugins, PLUGIN_ID)) {
+      return false;
+    }
+    return cfg.plugins[PLUGIN_ID]?.enabled !== false;
+  }
+  return true;
 }
 
 function readSettings() {
@@ -536,11 +548,19 @@ async function startWebUiServer() {
     }
     if (req.method === 'POST' && ['/api/settings', '/api/reinject', '/api/repair-launch'].includes(url.pathname)) {
       let raw = '';
+      let aborted = false;
       req.on('data', (c) => {
+        if (aborted) return;
         raw += c;
-        if (raw.length > 16384) req.destroy();
+        if (raw.length > 16384) {
+          aborted = true;
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end('{"error":"payload too large"}');
+          req.destroy();
+        }
       });
       req.on('end', async () => {
+        if (aborted) return;
         try {
           const payload = raw ? JSON.parse(raw) : {};
           const out =
@@ -583,6 +603,7 @@ async function shutdown() {
     await watcher.stop().catch(() => {});
     watcher = null;
   }
+  writeStatus({ state: 'stopped', attachedCount: 0, message: 'Sidecar 已停止' });
   if (serverHandle && typeof serverHandle.close === 'function') {
     await Promise.resolve(serverHandle.close()).catch(() => {});
   }
@@ -773,6 +794,18 @@ export async function uninstallPlugin(options = {}) {
     atomicWriteJson(paths.configFile, config);
   }
 
+  const portFile = options.portFile || getPortFilePath({ platform, env, home });
+  const removeRes = await removeOnce({
+    ...options,
+    portFile,
+    pidFile: paths.pidFile,
+    logger,
+    skipAutostartHint: true,
+  }).catch(() => ({ stoppedWatcher: false }));
+  if (removeRes?.stoppedWatcher) {
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
   let removedPluginDir = false;
   if (existsSync(paths.pluginDir)) {
     if (lstatSync(paths.pluginDir).isSymbolicLink()) {
@@ -786,15 +819,6 @@ export async function uninstallPlugin(options = {}) {
 
   unlinkQuietly(paths.statusFile);
   unlinkQuietly(paths.pidFile);
-
-  const portFile = options.portFile || getPortFilePath({ platform, env, home });
-  await removeOnce({
-    ...options,
-    portFile,
-    pidFile: paths.pidFile,
-    logger,
-    skipAutostartHint: true,
-  }).catch(() => {});
 
   logger.log(
     `[冬雪莲] 插件模式卸载完成：${removedPluginDir ? '已删除插件目录，' : ''}${revertRes.revertedCount > 0 ? `已撤回 ${revertRes.revertedCount} 个快捷方式参数，` : ''}已清理配置项。`,
@@ -828,12 +852,19 @@ export function getPluginStatus(options = {}) {
   const pluginEntry = config.plugins?.[PLUGIN_ID];
   const enabled = installed && pluginEntry?.enabled !== false;
   const settings = existsSync(paths.settingsFile) ? readJsonObject(paths.settingsFile) : null;
-  const integration = existsSync(paths.statusFile) ? readJsonObject(paths.statusFile) : null;
+  const sidecarPid = readLiveWatcherPid(paths.pidFile);
+  const rawIntegration = existsSync(paths.statusFile) ? readJsonObject(paths.statusFile) : null;
+  const integration =
+    !sidecarPid && rawIntegration && rawIntegration.state === 'active'
+      ? { ...rawIntegration, state: 'stopped', attachedCount: 0, message: 'Sidecar 未运行' }
+      : rawIntegration;
   const launch = inspectDesktopLaunch({ platform, home, env });
 
   return {
     installed,
     enabled,
+    running: Boolean(sidecarPid),
+    pid: sidecarPid,
     version: settings?.version || (installed ? readJsonObject(paths.manifestFile).version : null) || null,
     pluginDir: paths.pluginDir,
     settings,
