@@ -25,12 +25,82 @@ function isSymlinkQuietly(targetPath) {
   }
 }
 
+function scanShellTokens(argsText) {
+  const text = String(argsText || '');
+  const tokens = [];
+  let current = '';
+  let quote = '';
+  let quoted = false;
+  let inToken = false;
+  let tokenStart = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      inToken = true;
+      if (quote === '"' && ch === '\\' && i + 1 < text.length && (text[i + 1] === '"' || text[i + 1] === '\\')) {
+        current += ch + text[i + 1];
+        i += 1;
+        continue;
+      }
+      current += ch;
+      if (ch === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (inToken) {
+        tokens.push({ raw: current, start: tokenStart, end: i, quoted });
+        current = '';
+        quoted = false;
+        inToken = false;
+        tokenStart = -1;
+      }
+      continue;
+    }
+    if (!inToken) {
+      inToken = true;
+      tokenStart = i;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      quoted = true;
+      current += ch;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < text.length && (text[i + 1] === '"' || text[i + 1] === "'")) {
+      current += ch + text[i + 1];
+      i += 1;
+      continue;
+    }
+    current += ch;
+  }
+  if (inToken) {
+    tokens.push({ raw: current, start: tokenStart, end: text.length, quoted });
+  }
+  return tokens;
+}
+
 function tokenizeArgs(argsText) {
-  return String(argsText || '').match(/(?:"[^"]*"|[^\s"])+/g) || [];
+  return scanShellTokens(argsText).map((item) => item.raw);
 }
 
 function stripQuotes(token) {
   return token.replace(/^["']|["']$/g, '');
+}
+
+function isExecLineConfigured(line) {
+  const match = String(line || '').match(/^\s*Exec\s*=\s*(.+)$/);
+  if (!match) return false;
+  const { hasPort, hasAddress } = hasDebugFlags(match[1]);
+  return hasPort && hasAddress;
+}
+
+export function serializeAsciiJson(value) {
+  return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (ch) =>
+    `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
 }
 
 /**
@@ -58,27 +128,38 @@ export function parseLnkBuffer(data) {
     const infoHdrLen = data.readUInt32LE(pos + 4);
     const infoFlags = data.readUInt32LE(pos + 8);
     if (infoLen < 12 || pos + infoLen > data.length) return null;
-    if ((infoFlags & 0x01) && infoLen >= 20) {
-      const lbOff = data.readUInt32LE(pos + 16);
-      if (lbOff > 0 && lbOff < infoLen) {
-        let end = data.indexOf(0, pos + lbOff);
-        if (end === -1 || end > pos + infoLen) end = pos + infoLen;
-        target = data.subarray(pos + lbOff, end).toString('latin1');
-      }
-      if (infoHdrLen >= 0x24 && infoLen >= 32) {
-        const ubOff = data.readUInt32LE(pos + 28);
-        if (ubOff > 0 && ubOff < infoLen) {
-          const raw = data.subarray(pos + ubOff, pos + infoLen);
-          let uend = raw.length;
-          for (let i = 0; i + 1 < raw.length; i += 2) {
-            if (raw[i] === 0 && raw[i + 1] === 0) {
-              uend = i;
-              break;
-            }
-          }
-          target = raw.subarray(0, uend).toString('utf16le');
+
+    const readAnsiAt = (offsetField) => {
+      if (infoLen < offsetField + 4) return null;
+      const off = data.readUInt32LE(pos + offsetField);
+      if (off <= 0 || off >= infoLen) return null;
+      let end = data.indexOf(0, pos + off);
+      if (end === -1 || end > pos + infoLen) end = pos + infoLen;
+      return data.subarray(pos + off, end).toString('latin1');
+    };
+    const readUnicodeAt = (offsetField) => {
+      if (infoHdrLen < 0x24 || infoLen < offsetField + 4) return null;
+      const off = data.readUInt32LE(pos + offsetField);
+      if (off <= 0 || off >= infoLen) return null;
+      const raw = data.subarray(pos + off, pos + infoLen);
+      let uend = raw.length;
+      for (let i = 0; i + 1 < raw.length; i += 2) {
+        if (raw[i] === 0 && raw[i + 1] === 0) {
+          uend = i;
+          break;
         }
       }
+      return raw.subarray(0, uend).toString('utf16le');
+    };
+
+    const localBase = (infoFlags & 0x01) ? (readUnicodeAt(28) ?? readAnsiAt(16)) : null;
+    const commonSuffix = readUnicodeAt(32) ?? readAnsiAt(24);
+    if (localBase && commonSuffix) {
+      target = win32.join(localBase, commonSuffix);
+    } else if (localBase !== null) {
+      target = localBase;
+    } else if (commonSuffix) {
+      target = commonSuffix;
     }
     pos += infoLen;
   }
@@ -189,11 +270,22 @@ export function mergeDesktopEntry(text) {
   const out = [];
   let inEntry = false;
   let markerWritten = lines.some((line) => line.trim() === DESKTOP_MANAGED_MARKER);
+  const pushMarkerBeforeBlankLines = () => {
+    let blanks = 0;
+    while (out.length > 0 && out[out.length - 1] === '') {
+      out.pop();
+      blanks += 1;
+    }
+    out.push(DESKTOP_MANAGED_MARKER);
+    for (let i = 0; i < blanks; i++) {
+      out.push('');
+    }
+  };
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
       if (inEntry && !markerWritten) {
-        out.push(DESKTOP_MANAGED_MARKER);
+        pushMarkerBeforeBlankLines();
         markerWritten = true;
       }
       inEntry = trimmed === '[Desktop Entry]';
@@ -203,22 +295,34 @@ export function mergeDesktopEntry(text) {
     const execMatch = line.match(/^(\s*Exec\s*=\s*)(.+)$/);
     if (execMatch) {
       let rhs = execMatch[2].trimEnd();
-      if (!rhs.includes('--remote-debugging-port')) {
-        const field = rhs.match(/\s+%[fFuUdDnNickvm]/);
-        const flags = `${DEBUG_PORT_FLAG} ${DEBUG_ADDRESS_FLAG}`;
-        rhs = field
-          ? `${rhs.slice(0, field.index)} ${flags}${rhs.slice(field.index)}`
-          : `${rhs} ${flags}`;
+      const { hasPort, hasAddress } = hasDebugFlags(rhs);
+      const missing = [];
+      if (!hasPort) missing.push(DEBUG_PORT_FLAG);
+      if (!hasAddress) missing.push(DEBUG_ADDRESS_FLAG);
+      if (missing.length > 0) {
+        const tokens = scanShellTokens(rhs);
+        const fieldToken = tokens.find((t) => !t.quoted && /^%[fFuUdDnNickvm]$/.test(t.raw));
+        const flags = missing.join(' ');
+        if (fieldToken) {
+          const before = rhs.slice(0, fieldToken.start).trimEnd();
+          const after = rhs.slice(fieldToken.start);
+          rhs = before ? `${before} ${flags} ${after}` : `${flags} ${after}`;
+        } else {
+          rhs = rhs ? `${rhs} ${flags}` : flags;
+        }
       }
       out.push(execMatch[1] + rhs);
       continue;
     }
     out.push(line);
   }
+  while (out.length > 0 && out[out.length - 1] === '') {
+    out.pop();
+  }
   if (inEntry && !markerWritten) {
     out.push(DESKTOP_MANAGED_MARKER);
   }
-  return `${out.join('\n')}\n`;
+  return out.length > 0 ? `${out.join('\n')}\n` : '';
 }
 
 function getWindowsShortcutRoots({ home = homedir(), env = process.env } = {}) {
@@ -292,7 +396,7 @@ function defaultExecPowerShell(updates) {
       { windowsHide: true, timeout: 10000 },
       (error) => (error ? rejectPromise(error) : resolvePromise()),
     );
-    child.stdin.end(JSON.stringify(updates), 'utf8');
+    child.stdin.end(serializeAsciiJson(updates), 'utf8');
   });
 }
 
@@ -348,7 +452,7 @@ export function inspectDesktopLaunch({
     try {
       const content = readFileSync(userFile, 'utf8');
       const execLines = content.split(/\r?\n/).filter((line) => /^\s*Exec\s*=/.test(line));
-      const configured = execLines.length > 0 && execLines.every((line) => line.includes('--remote-debugging-port'));
+      const configured = execLines.length > 0 && execLines.every(isExecLineConfigured);
       return { configured, supported: true, entrypoints: [userFile] };
     } catch {
       return { configured: false, supported: true, entrypoints: [] };
@@ -432,7 +536,7 @@ export async function ensureDesktopLaunchConfig({
         const existing = readFileSync(userFile, 'utf8');
         if (!existing.includes(DESKTOP_MANAGED_MARKER)) {
           const execLines = existing.split(/\r?\n/).filter((line) => /^\s*Exec\s*=/.test(line));
-          const configured = execLines.length > 0 && execLines.every((line) => line.includes('--remote-debugging-port'));
+          const configured = execLines.length > 0 && execLines.every(isExecLineConfigured);
           return { configured, repaired: false, supported: true, entrypoints: [userFile] };
         }
         source = existing;

@@ -323,3 +323,32 @@ test('ASAR 符号链接条目无损重打包，且未打补丁但残留旧备份
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('回归测试：buildAsarArchive 校验非法偏移与路径节点冲突，patchMainJsSource 兼容单行压缩 JS', () => {
+  // 1. 负偏移或越界 size 应被 buildAsarArchive 拒绝
+  const validBuf = createSyntheticAsar({
+    'dist/a.js': 'console.log(1);',
+  });
+  const badOffsetArchive = parseAsarArchive(validBuf);
+  badOffsetArchive.header.files.dist.files['a.js'].offset = '-4';
+  badOffsetArchive.header.files.dist.files['a.js'].size = 4;
+  assert.throws(() => buildAsarArchive(badOffsetArchive), /偏移或大小无效/);
+
+  const badSizeArchive = parseAsarArchive(validBuf);
+  badSizeArchive.header.files.dist.files['a.js'].size = 999999;
+  assert.throws(() => buildAsarArchive(badSizeArchive), /超出文件范围/);
+
+  // 2. 新增覆盖路径经过已有普通文件或 symlink 时应抛出清晰错误
+  const conflictArchive = parseAsarArchive(validBuf);
+  assert.throws(
+    () => buildAsarArchive(conflictArchive, new Map([['dist/a.js/nested.js', Buffer.from('x')]])),
+    /覆盖路径冲突/,
+  );
+
+  // 3. 单行压缩 JS 仅含 "use strict"; 且无换行时，回退插在 "use strict"; 分号之后并保持可逆
+  const minified = '"use strict";const electron_1=require("electron");console.log(1);';
+  const patched = patchMainJsSource(minified);
+  assert.ok(patched.startsWith('"use strict";'));
+  assert.ok(patched.includes(`require('./${ASAR_HOOK_FILENAME}')`));
+  assert.equal(unpatchMainJsSource(patched), minified);
+});

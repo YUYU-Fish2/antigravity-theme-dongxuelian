@@ -248,7 +248,7 @@ body.theme-light [data-testid="title-menu-bar"] {
 body.theme-light [data-dxl-stage="conversation"] {
   position: relative !important;
   isolation: isolate !important;
-  overflow: hidden;
+  overflow-x: clip;
   container-name: dxl-reading;
   container-type: inline-size;
 }

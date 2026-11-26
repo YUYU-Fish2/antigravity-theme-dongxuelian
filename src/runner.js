@@ -1,13 +1,17 @@
 import { execFileSync } from 'node:child_process';
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   statSync,
   unlinkSync,
   watch,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -196,15 +200,64 @@ export function formatUsage(commandName = 'inject') {
   ].join('\n');
 }
 
+const PAYLOAD_FINGERPRINT_FILES = Object.freeze([
+  'package.json',
+  'src/theme.css',
+  'src/cdp.js',
+  'src/i18n.js',
+  'src/assets.js',
+  'assets/characters/web/avatar.webp',
+  'assets/scenes/web/reading.webp',
+  'assets/textures/web/paper.webp',
+]);
+
+function statFingerprint(filePath) {
+  try {
+    const st = statSync(filePath);
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return 'missing';
+  }
+}
+
+function computePayloadFingerprint({ resolvedRoot, avatar, shift, i18n, i18nOverride }) {
+  const overridePath =
+    typeof i18nOverride === 'string' && i18nOverride.trim()
+      ? resolve(process.cwd(), i18nOverride.trim())
+      : '';
+  const files = {};
+  for (const rel of PAYLOAD_FINGERPRINT_FILES) {
+    files[rel] = statFingerprint(join(resolvedRoot, rel));
+  }
+  if (i18n) {
+    files[DEFAULT_I18N_RELATIVE_PATH] = statFingerprint(join(resolvedRoot, DEFAULT_I18N_RELATIVE_PATH));
+    files[DEFAULT_OVERRIDE_RELATIVE_PATH] = statFingerprint(
+      join(resolvedRoot, DEFAULT_OVERRIDE_RELATIVE_PATH),
+    );
+    if (overridePath) {
+      files[`override:${overridePath}`] = statFingerprint(overridePath);
+    }
+  }
+  return JSON.stringify({
+    resolvedRoot,
+    avatar: Boolean(avatar),
+    shift: Boolean(shift),
+    i18n: Boolean(i18n),
+    overridePath,
+    files,
+  });
+}
+
 /**
- * 构建当前配置对应的 CSS 与完整注入脚本。
+ * 构建当前配置对应的 CSS 与完整注入脚本（传入 `cacheFile` 时自动复用预编译指纹缓存）。
  * @param {object} [options]
  * @param {string} [options.rootDir]
  * @param {boolean} [options.avatar]
  * @param {boolean} [options.shift]
  * @param {boolean} [options.i18n]
  * @param {string} [options.i18nOverride]
- * @returns {{ css: string, script: string, version: string }}
+ * @param {string} [options.cacheFile]
+ * @returns {{ css: string, script: string, version: string, fromCache: boolean }}
  */
 export function prepareRuntimePayload({
   rootDir = DEFAULT_ROOT,
@@ -212,8 +265,29 @@ export function prepareRuntimePayload({
   shift = true,
   i18n = true,
   i18nOverride,
+  cacheFile,
 } = {}) {
   const resolvedRoot = resolveRootPath(rootDir);
+  let fingerprint = '';
+  if (cacheFile) {
+    fingerprint = computePayloadFingerprint({ resolvedRoot, avatar, shift, i18n, i18nOverride });
+    try {
+      if (existsSync(cacheFile)) {
+        const cached = JSON.parse(readFileSync(cacheFile, 'utf8'));
+        if (
+          cached &&
+          cached.fingerprint === fingerprint &&
+          typeof cached.script === 'string' &&
+          typeof cached.version === 'string'
+        ) {
+          return { css: '', script: cached.script, version: cached.version, fromCache: true };
+        }
+      }
+    } catch {
+      // 缓存损坏时回退重新编译
+    }
+  }
+
   const assets = loadThemeAssets(resolvedRoot);
   const css = buildThemeCss({ rootDir: resolvedRoot, assets });
   const version = readPackageVersion(resolvedRoot);
@@ -226,7 +300,19 @@ export function prepareRuntimePayload({
     i18nDict,
     version,
   });
-  return { css, script, version };
+
+  if (cacheFile) {
+    try {
+      mkdirSync(dirname(cacheFile), { recursive: true });
+      const tmp = `${cacheFile}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ fingerprint, version, script }), 'utf8');
+      renameSync(tmp, cacheFile);
+    } catch {
+      // 写入缓存失败不影响正常注入流程
+    }
+  }
+
+  return { css, script, version, fromCache: false };
 }
 
 function warnIfConflicts(evalResult, pageLabel, logger) {
@@ -239,8 +325,11 @@ function warnIfConflicts(evalResult, pageLabel, logger) {
 }
 
 async function injectPageSession(session, script, { pageLabel = '', logger } = {}) {
-  await session.send('Page.enable');
-  const evalResult = await session.evaluate(script);
+  // 优先执行首屏注入同时启用 Page 域，缩短首次视觉切换等待
+  const [evalResult] = await Promise.all([
+    session.evaluate(script),
+    session.send('Page.enable'),
+  ]);
   warnIfConflicts(evalResult, pageLabel, logger);
   const registered = await session.send('Page.addScriptToEvaluateOnNewDocument', {
     source: script,
@@ -619,6 +708,7 @@ export async function startWatch(options = {}) {
     port,
     portFile = getPortFilePath(),
     pidFile = join(resolvedRoot, '.watch.pid'),
+    payloadCacheFile,
     avatar = true,
     shift = true,
     i18n = true,
@@ -630,10 +720,18 @@ export async function startWatch(options = {}) {
     logger = console,
     onSync,
     onWaitError,
+    onPidWritten,
   } = options;
 
   const compilePayload = () =>
-    prepareRuntimePayload({ rootDir: resolvedRoot, avatar, shift, i18n, i18nOverride });
+    prepareRuntimePayload({
+      rootDir: resolvedRoot,
+      avatar,
+      shift,
+      i18n,
+      i18nOverride,
+      cacheFile: payloadCacheFile,
+    });
 
   // 启动时校验一次资产、CSS 与词典，并在首轮同步后立即释放大字符串（约 1.17 MB），避免常驻内存
   let initialPayload = compilePayload();
@@ -651,14 +749,17 @@ export async function startWatch(options = {}) {
   let portTimer = null;
   let retryTimer = null;
   let reconnectTimer = null;
-  const PORT_READY_BACKOFF_MS = [150, 400, 1000, 2500];
+  const PORT_READY_BACKOFF_MS = [40, 100, 250, 600, 1500];
   const fsWatchers = [];
   let waitErrorLogged = false;
 
   try {
+    mkdirSync(dirname(pidFile), { recursive: true });
     writeFileSync(pidFile, `${process.pid}\n`, 'utf8');
   } catch (err) {
     logger.warn(`[冬雪莲] 写入 PID 文件失败（${pidFile}）：${err.message}`);
+  } finally {
+    onPidWritten?.();
   }
 
   const runReinjectPass = async () => {
@@ -677,6 +778,9 @@ export async function startWatch(options = {}) {
 
     let updated = 0;
     for (const [pageId, entry] of Array.from(attached.entries())) {
+      if (stopped) {
+        break;
+      }
       try {
         if (entry.scriptId) {
           await entry.session
@@ -829,35 +933,49 @@ export async function startWatch(options = {}) {
           }
         }
         const versionAtInject = payloadVersion;
-        for (const page of unattached) {
-          if (stopped || attached.has(page.id)) {
-            continue;
-          }
-          const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
-          try {
-            await session.connect();
-            const { scriptId } = await injectPageSession(session, payload.script, {
-              pageLabel: page.title || page.id,
-              logger,
-            });
-            session.on('close', () => {
-              attached.delete(page.id);
-            });
-            attached.set(page.id, {
-              session,
-              scriptId,
-              title: page.title || '',
-              payloadVersion: versionAtInject,
-            });
-            if (versionAtInject !== payloadVersion) {
-              needsCatchUp = true;
+        const pendingPageIds = new Set();
+        await Promise.all(
+          unattached.map(async (page) => {
+            if (stopped || attached.has(page.id) || pendingPageIds.has(page.id)) {
+              return;
             }
-            logger.log(`[冬雪莲] 已挂载并注入页面：${page.title || page.id}`);
-          } catch (err) {
-            await session.close().catch(() => {});
-            logger.warn(`[冬雪莲] 注入页面失败（${page.id}）：${err.message}`);
-          }
-        }
+            pendingPageIds.add(page.id);
+            const session = new CdpSession(page.webSocketDebuggerUrl, { WebSocketImpl, timeoutMs });
+            try {
+              await session.connect();
+              if (stopped) {
+                await session.close().catch(() => {});
+                return;
+              }
+              const { scriptId } = await injectPageSession(session, payload.script, {
+                pageLabel: page.title || page.id,
+                logger,
+              });
+              if (stopped) {
+                await session.close().catch(() => {});
+                return;
+              }
+              session.on('close', () => {
+                attached.delete(page.id);
+              });
+              attached.set(page.id, {
+                session,
+                scriptId,
+                title: page.title || '',
+                payloadVersion: versionAtInject,
+              });
+              if (versionAtInject !== payloadVersion) {
+                needsCatchUp = true;
+              }
+              logger.log(`[冬雪莲] 已挂载并注入页面：${page.title || page.id}`);
+            } catch (err) {
+              await session.close().catch(() => {});
+              logger.warn(`[冬雪莲] 注入页面失败（${page.id}）：${err.message}`);
+            } finally {
+              pendingPageIds.delete(page.id);
+            }
+          }),
+        );
       }
       if (!stopped) {
         await ensureBrowserDiscovery(targetPort, browserWsPath).catch(() => {});
@@ -913,24 +1031,139 @@ export async function startWatch(options = {}) {
   };
 
   const registerDirWatcher = (dir, targetNames, onChange) => {
-    if (!existsSync(dir)) return null;
-    try {
-      const watcher = watch(dir, (_eventType, filename) => {
-        if (stopped) return;
-        if (filename && targetNames && !targetNames.has(basename(String(filename)))) {
-          return;
+    const resolvedDir = resolve(dir);
+    let activeWatcher = null;
+    let activeWatchDir = null;
+    let reattachTimer = null;
+    let disposed = false;
+    let waitingForDir = false;
+
+    const findAnchor = () => {
+      let current = resolvedDir;
+      let child = null;
+      while (!existsSync(current)) {
+        const parent = dirname(current);
+        if (!parent || parent === current) {
+          return null;
         }
-        onChange();
-      });
-      watcher.on?.('error', (err) => {
-        logger.warn(`[冬雪莲] 文件监听异常（${dir}）：${err.message}`);
-      });
-      fsWatchers.push(watcher);
-      return watcher;
-    } catch (err) {
-      logger.warn(`[冬雪莲] 启动文件监听失败（${dir}）：${err.message}`);
-      return null;
-    }
+        child = basename(current);
+        current = parent;
+      }
+      return {
+        watchDir: current,
+        childName: child,
+        isTarget: current === resolvedDir,
+      };
+    };
+
+    const hasAnyTargetFile = () => {
+      if (!targetNames || targetNames.size === 0) return true;
+      for (const name of targetNames) {
+        if (existsSync(join(resolvedDir, name))) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const closeActive = () => {
+      if (!activeWatcher) return;
+      const w = activeWatcher;
+      activeWatcher = null;
+      activeWatchDir = null;
+      try {
+        w.close();
+      } catch {
+        // 忽略关闭监听异常
+      }
+    };
+
+    const scheduleAttach = (delayMs = 50) => {
+      if (stopped || disposed || reattachTimer) return;
+      reattachTimer = setTimeout(() => {
+        reattachTimer = null;
+        attach();
+      }, delayMs);
+    };
+
+    const attach = () => {
+      if (stopped || disposed) return;
+      const anchor = findAnchor();
+      if (!anchor) return;
+      if (activeWatcher && activeWatchDir === anchor.watchDir) {
+        return;
+      }
+      closeActive();
+      try {
+        const watcher = watch(anchor.watchDir, (_eventType, filename) => {
+          if (stopped || disposed || activeWatcher !== watcher) return;
+          if (!existsSync(anchor.watchDir)) {
+            waitingForDir = true;
+            closeActive();
+            scheduleAttach(30);
+            return;
+          }
+          if (!anchor.isTarget) {
+            if (
+              filename &&
+              basename(String(filename)) !== anchor.childName &&
+              !existsSync(join(anchor.watchDir, anchor.childName))
+            ) {
+              return;
+            }
+            if (existsSync(join(anchor.watchDir, anchor.childName))) {
+              attach();
+            }
+            return;
+          }
+          if (filename && targetNames && !targetNames.has(basename(String(filename)))) {
+            return;
+          }
+          onChange();
+        });
+        watcher.on?.('error', (err) => {
+          if (stopped || disposed || activeWatcher !== watcher) return;
+          logger.warn(`[冬雪莲] 文件监听异常（${anchor.watchDir}）：${err.message}`);
+          waitingForDir = true;
+          closeActive();
+          scheduleAttach(80);
+        });
+        watcher.on?.('close', () => {
+          if (stopped || disposed || activeWatcher !== watcher) return;
+          activeWatcher = null;
+          activeWatchDir = null;
+          waitingForDir = true;
+          scheduleAttach(80);
+        });
+        activeWatcher = watcher;
+        activeWatchDir = anchor.watchDir;
+        if (anchor.isTarget) {
+          const upgraded = waitingForDir;
+          waitingForDir = false;
+          if (upgraded && hasAnyTargetFile()) {
+            onChange();
+          }
+        } else {
+          waitingForDir = true;
+        }
+      } catch (err) {
+        logger.warn(`[冬雪莲] 启动文件监听失败（${anchor.watchDir}）：${err.message}`);
+        waitingForDir = true;
+        scheduleAttach(150);
+      }
+    };
+
+    attach();
+    const handle = {
+      close() {
+        disposed = true;
+        clearTimeout(reattachTimer);
+        reattachTimer = null;
+        closeActive();
+      },
+    };
+    fsWatchers.push(handle);
+    return handle;
   };
 
   const watchCandidates = [join(resolvedRoot, 'src', 'theme.css')];
@@ -965,21 +1198,6 @@ export async function startWatch(options = {}) {
   const resolvedPortFile = resolve(portFile);
   const portDir = dirname(resolvedPortFile);
   const portBase = basename(resolvedPortFile);
-  let activePortWatcher = null;
-
-  const replacePortWatcher = (nextWatcher) => {
-    if (activePortWatcher) {
-      const idx = fsWatchers.indexOf(activePortWatcher);
-      if (idx >= 0) fsWatchers.splice(idx, 1);
-      try {
-        activePortWatcher.close();
-      } catch {
-        // 忽略关闭监听异常
-      }
-      activePortWatcher = null;
-    }
-    activePortWatcher = nextWatcher;
-  };
 
   const triggerPortSync = () => {
     clearTimeout(portTimer);
@@ -987,26 +1205,12 @@ export async function startWatch(options = {}) {
     portTimer = setTimeout(() => {
       portTimer = null;
       void syncPortWithBackoff(0);
-    }, 80);
+    }, 25);
   };
 
   const attachPortFileWatcher = () => {
     if (stopped) return;
-    if (existsSync(portDir)) {
-      const w = registerDirWatcher(portDir, new Set([portBase]), triggerPortSync);
-      replacePortWatcher(w);
-      return;
-    }
-    const parentDir = dirname(portDir);
-    if (parentDir && parentDir !== portDir && existsSync(parentDir)) {
-      const portDirName = basename(portDir);
-      const w = registerDirWatcher(parentDir, new Set([portDirName]), () => {
-        if (stopped || !existsSync(portDir)) return;
-        attachPortFileWatcher();
-        triggerPortSync();
-      });
-      replacePortWatcher(w);
-    }
+    registerDirWatcher(portDir, new Set([portBase]), triggerPortSync);
   };
 
   attachPortFileWatcher();
@@ -1032,7 +1236,6 @@ export async function startWatch(options = {}) {
     clearTimeout(portTimer);
     clearTimeout(retryTimer);
     clearTimeout(reconnectTimer);
-    activePortWatcher = null;
     for (const watcher of fsWatchers) {
       try {
         watcher.close();
@@ -1041,6 +1244,7 @@ export async function startWatch(options = {}) {
       }
     }
     fsWatchers.length = 0;
+    await Promise.allSettled([syncInFlight, reinjectInFlight].filter(Boolean));
     if (browserSession) {
       await browserSession.close().catch(() => {});
       browserSession = null;
@@ -1062,6 +1266,71 @@ export async function startWatch(options = {}) {
   };
 }
 
+async function acquirePidLock(pidFile, { timeoutMs = 5000 } = {}) {
+  const lockFile = `${pidFile}.lock`;
+  mkdirSync(dirname(pidFile), { recursive: true });
+  const deadline = Date.now() + timeoutMs;
+
+  const createLock = () => {
+    const fd = openSync(lockFile, 'wx');
+    try {
+      writeSync(fd, `${process.pid}\n`, null, 'utf8');
+    } finally {
+      closeSync(fd);
+    }
+    let released = false;
+    const cleanup = () => {
+      if (released) return;
+      released = true;
+      process.off('exit', cleanup);
+      unlinkPidFileIfOwned(lockFile, process.pid);
+    };
+    process.once('exit', cleanup);
+    return cleanup;
+  };
+
+  while (true) {
+    try {
+      return createLock();
+    } catch (err) {
+      if (err?.code !== 'EEXIST') {
+        throw err;
+      }
+    }
+
+    let stale = false;
+    try {
+      const raw = readFileSync(lockFile, 'utf8').trim();
+      const lockPid = Number.parseInt(raw, 10);
+      const ageMs = Date.now() - statSync(lockFile).mtimeMs;
+      if (Number.isInteger(lockPid) && lockPid > 0) {
+        if (lockPid !== process.pid) {
+          const status = getNodeProcessStatus(lockPid);
+          if (status === 'dead' || status === 'other' || (status === 'unknown' && ageMs > 10000)) {
+            stale = true;
+          }
+        }
+      } else if (ageMs > 1500) {
+        stale = true;
+      }
+    } catch (readErr) {
+      if (readErr?.code === 'ENOENT') {
+        continue;
+      }
+      stale = true;
+    }
+
+    if (stale) {
+      unlinkQuietly(lockFile);
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      return null;
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 /**
  * 以阻塞守护模式运行监听循环，收到 `SIGINT`/`SIGTERM` 后优雅清理退出。
  * @param {object} [options]
@@ -1074,15 +1343,36 @@ export async function watchLoop(options = {}) {
   const isDaemon = Boolean(options.daemon);
   const logger = options.logger ?? (isDaemon ? createDaemonLogger(logFile) : console);
 
-  if (options.ifNotRunning) {
-    const livePid = readLiveWatcherPid(pidFile);
-    if (livePid && livePid !== process.pid) {
-      logger.log(`[冬雪莲] 监听进程已在运行 (PID ${livePid})，跳过重复启动。`);
-      return;
+  let releasePidLock = null;
+  let controller;
+  try {
+    if (options.ifNotRunning) {
+      releasePidLock = await acquirePidLock(pidFile);
+      const livePid = readLiveWatcherPid(pidFile);
+      if (livePid && livePid !== process.pid) {
+        logger.log(`[冬雪莲] 监听进程已在运行 (PID ${livePid})，跳过重复启动。`);
+        return;
+      }
+      if (!releasePidLock) {
+        logger.warn(`[冬雪莲] 获取守护进程锁超时（${pidFile}.lock），跳过重复启动。`);
+        return;
+      }
     }
-  }
 
-  const controller = await startWatch({ ...options, rootDir: resolvedRoot, pidFile, logger });
+    controller = await startWatch({
+      ...options,
+      rootDir: resolvedRoot,
+      pidFile,
+      logger,
+      onPidWritten: () => {
+        releasePidLock?.();
+        releasePidLock = null;
+      },
+    });
+  } finally {
+    releasePidLock?.();
+    releasePidLock = null;
+  }
   logger.log(
     isDaemon
       ? '[冬雪莲] 后台守护监听已启动（自动追踪窗口、客户端重启重连及热重载）。'

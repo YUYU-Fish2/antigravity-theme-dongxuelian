@@ -832,3 +832,79 @@ test('Antigravity 2.35.0 新增词典、动态模板、属性文案与高危防�
   assert.equal(siteCookiesText.nodeValue, '3 cookies');
   assert.equal(termEmptyText.nodeValue, 'No active terminals');
 });
+
+test('审计回归：React 文本节点复用清理、单数删除提示与动态模板防误拼', () => {
+  const css = buildThemeCss({ rootDir: ROOT });
+  const { dict } = loadI18nDictionary({ rootDir: ROOT });
+  const page = createMockAntigravityPage({ light: true });
+  const { document, elements } = page;
+  const { stage } = elements;
+
+  // 1. React 复用同一 Text 节点（更新为非翻译值 / 清空）后不应残留旧 origTextMap 记录导致 restoreI18nDom 误篡改
+  const reusedUpdateEl = document.createElement('span');
+  const reusedUpdateText = appendText(document, reusedUpdateEl, 'Settings');
+  const reusedClearEl = document.createElement('span');
+  const reusedClearText = appendText(document, reusedClearEl, 'Settings');
+  stage.appendChild(reusedUpdateEl);
+  stage.appendChild(reusedClearEl);
+
+  // 2. 单数活跃对话删除提示与常见会话操作模板、泛指代词/介词防误拼
+  const cases = [
+    ['Permanently delete MyProject including 1 active conversation.', '永久删除 MyProject 及 1 个进行中的对话。'],
+    ['Failed to archive conversation', '归档对话失败'],
+    ['Failed to archive MyProject', '归档 MyProject 失败'],
+    ['Couldn\u2019t pin conversation', '无法置顶对话'],
+    ["Couldn't archive conversation", '无法归档对话'],
+    ['Failed to pin conversation', '置顶对话失败'],
+    ['Failed to delete cache-dir: EBUSY', '删除 cache-dir 失败：EBUSY'],
+    ['Allow this?', 'Allow this?'],
+    ['Allow access?', 'Allow access?'],
+    ['Set up in Settings', 'Set up in Settings'],
+    ['Allow GitHub?', '是否允许 GitHub？'],
+    ['Set up GitHub', '设置 GitHub'],
+  ];
+  const caseNodes = cases.map(([raw]) => {
+    const sp = document.createElement('span');
+    const tn = appendText(document, sp, raw);
+    stage.appendChild(sp);
+    return tn;
+  });
+
+  const script = buildInjectScript(css, {
+    avatar: false,
+    shift: true,
+    i18n: true,
+    i18nDict: dict,
+    version: '0.1.0',
+  });
+  page.evaluate(script);
+
+  assert.equal(reusedUpdateText.nodeValue, '系统设置');
+  assert.equal(reusedClearText.nodeValue, '系统设置');
+  cases.forEach(([, expected], idx) => {
+    assert.equal(caseNodes[idx].nodeValue, expected);
+  });
+
+  // 模拟 React 先更新为不可翻译内容 / 清空为空串，再复用到与旧译文相同的字面量
+  reusedUpdateText.nodeValue = 'my-branch';
+  reusedClearText.nodeValue = '';
+  for (const obs of page.observers) {
+    obs.trigger();
+  }
+  assert.equal(reusedUpdateText.nodeValue, 'my-branch');
+  assert.equal(reusedClearText.nodeValue, '');
+
+  reusedUpdateText.nodeValue = '系统设置';
+  reusedClearText.nodeValue = '系统设置';
+  for (const obs of page.observers) {
+    obs.trigger();
+  }
+
+  // 卸载还原时，已被 React 复用覆写过的节点不得被旧记录误改回 "Settings"
+  page.evaluate(REMOVE_EXPRESSION);
+  assert.equal(reusedUpdateText.nodeValue, '系统设置');
+  assert.equal(reusedClearText.nodeValue, '系统设置');
+  cases.forEach(([raw], idx) => {
+    assert.equal(caseNodes[idx].nodeValue, raw);
+  });
+});

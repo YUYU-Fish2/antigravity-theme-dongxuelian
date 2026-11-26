@@ -368,7 +368,7 @@ export function createI18nController(dict, version, restoreDomFn) {
   const RE_STILL_THINKING_SEC = /^Still thinking,\s*(\d+)\s*seconds?$/i;
   const RE_MARKED_READ = /^Marked\s+(\d+)\s+conversations?\s+as\s+read$/i;
   const RE_ZIPPING_FOLDER = /^Zipping\s+(.+?)(?:…|\.\.\.)$/i;
-  const RE_PERM_DELETE = /^Permanently delete\s+(.*)\s+including\s+(\d+)\s+active\s+conversations\.?$/i;
+  const RE_PERM_DELETE = /^Permanently delete\s+(.*)\s+including\s+(\d+)\s+active\s+conversations?\.?$/i;
   const RE_WORKED_FOR_UPDATES = /^Worked for\s+([<0-9smhd\s]+?)\s*·\s*(\d+)\s+updates?$/i;
   const RE_WORKED_FOR = /^Worked for\s+([<0-9smhd]+(?:\s+\d+[smhd])*)$/i;
   const RE_WAITING_CMD_SEC = /^Waiting for command completion\s*\(up to\s+(\d+)\s+seconds?\)$/i;
@@ -616,6 +616,16 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^System\s+default\s*\((.+)\)$/i, '系统默认 ($1)'],
   ];
 
+  const CONV_ACTION_MAP = {
+    archive: '归档',
+    unarchive: '取消归档',
+    pin: '置顶',
+    unpin: '取消置顶',
+    delete: '删除',
+    rename: '重命名',
+    fork: '分叉',
+  };
+
   // 新版 UI 高频通用动态模板规则（精确句式/前缀锚定，避免误伤常规英语正文）
   const GENERAL_DYNAMIC_RULES = [
     [/^Available\s+AI\s+Credits:\s*(.+)$/i, '可用 AI 点数：$1'],
@@ -628,7 +638,7 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Add\s+bundle\s+(.+)$/i, '添加合集包 $1'],
     [/^App\s+view\s+for\s+(.+)$/i, '$1 的应用视图'],
     [/^Agent\s+finished:\s*(.+)$/i, 'Agent 已完成：$1'],
-    [/^(?!Allow\s+.*?\bto\b\s+.*?\?$)Allow\s+([^\r\n.!?]{1,48})\?$/i, '是否允许 $1？'],
+    [/^(?!Allow\s+(?:(?:this|that|these|those|it|them|access|all|any|none)\b|.*?\bto\b\s+.*?\?$))Allow\s+([^\r\n.!?]{1,48})\?$/i, '是否允许 $1？'],
     [/^A\s+file\s+already\s+exists\s+at\s+(.+)\.$/, '$1 处已存在同名文件。'],
     [/^Blocked\s+navigation\s+to\s+"(.+)"$/, '已拦截前往“$1”的导航'],
     [/^Blocked\s+popup\s+to\s+"(.+)"$/, '已拦截前往“$1”的弹窗'],
@@ -642,8 +652,14 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Comment\s*\((\d+)\)$/i, '评论 ($1)'],
     [/^Connected\s+to\s+(.+)$/, '已连接至 $1'],
     [/^Coordinator\s*·\s*(\d+)\s+of\s+(\d+)\s+done(.*)$/i, '协调器 · 已完成 $1 / $2$3'],
-    [/^Couldn't\s+connect\s+to\s+(.+)$/, '无法连接至 $1'],
-    [/^Couldn't\s+(\w+)\s+conversation$/i, '无法对对话执行 $1 操作'],
+    [/^Couldn['’]t\s+connect\s+to\s+(.+)$/, '无法连接至 $1'],
+    [
+      /^Couldn['’]t\s+(\w+)\s+conversation$/i,
+      (_, verb) => {
+        const zh = CONV_ACTION_MAP[verb.toLowerCase()];
+        return zh ? `无法${zh}对话` : `无法对对话执行 ${verb} 操作`;
+      },
+    ],
     [/^Connect\s+GitHub:\s*(.+)$/, '连接 GitHub：$1'],
     [/^Created\s+automation\s+"(.+)"\.$/, '已创建自动化任务“$1”。'],
     [/^Customize\s+your\s+experience\s+across\s+the\s+agent,\s+plugins,\s+and\s+product\s+from\s+the\s+settings\s+and\s+marketplace\.\s+We\s+won['’]t\s+show\s+you\s+ads\s+or\s+let\s+advertisers\s+influence\s+what\s+([^\r\n]{1,40}?)\s+says\.$/i, '您可在设置与插件市场中自定义 Agent、插件及产品的体验。我们不会向您展示广告，也不会让广告主影响 $1 的输出。'],
@@ -696,7 +712,26 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Failed\s+to\s+delete\s+recordings:\s*(.+)$/, '删除录音失败：$1'],
     [/^Failed\s+to\s+resolve\s+folder:\s*(.+)$/, '解析文件夹失败：$1'],
     [/^Failed\s+to\s+create\s+(.+)$/, '创建 $1 失败'],
-    [/^Failed\s+to\s+(\w+)\s+conversation$/i, '对对话执行 $1 操作失败'],
+    [
+      /^Failed\s+to\s+archive\s+(.+)$/,
+      (_, target) => (target.toLowerCase() === 'conversation' ? '归档对话失败' : `归档 ${target} 失败`),
+    ],
+    [
+      /^Failed\s+to\s+delete\s+([^:]+):\s*(.+)$/,
+      (_, target, reason) =>
+        target.trim().toLowerCase() === 'conversation' ? `删除对话失败：${reason}` : `删除 ${target} 失败：${reason}`,
+    ],
+    [
+      /^Failed\s+to\s+delete\s+(.+)$/,
+      (_, target) => (target.toLowerCase() === 'conversation' ? '删除对话失败' : `删除 ${target} 失败`),
+    ],
+    [
+      /^Failed\s+to\s+(\w+)\s+conversation$/i,
+      (_, verb) => {
+        const zh = CONV_ACTION_MAP[verb.toLowerCase()];
+        return zh ? `${zh}对话失败` : `对对话执行 ${verb} 操作失败`;
+      },
+    ],
     [/^Generation\s+Steps\s*\((\d+)\)$/i, '生成步骤 ($1)'],
     [/^GIF\s+ready\s*\(([^)\r\n]+)\)\s*—\s*right-click\s+image\s+to\s+save\.$/i, 'GIF 已就绪 ($1) — 右键点击图片即可保存。'],
     [/^Go\s+to\s+#(\d+)\s*\(([^)\r\n]+)\)$/i, '跳转至 #$1 ($2)'],
@@ -746,7 +781,7 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^Searched\s+web:\s*"([^"\r\n]*)"$/i, '已搜索网页：“$1”'],
     [/^Self\s*\(([^)\r\n]{1,60})\)$/i, '自身 ($1)'],
     [/^Send\s+all\s*\((\d+)\)$/i, '全部发送 ($1)'],
-    [/^(?!Set\s+up\s+(?:a|an|the|your|this|these|those|new|more|another)\b)Set\s+up\s+([A-Za-z0-9][^\r\n.,!?;:]{0,39})$/i, '设置 $1'],
+    [/^(?!Set\s+up\s+(?:a|an|the|your|this|these|those|new|more|another|in|on|at|to|for|with|from|by|of|as|into|via)\b)Set\s+up\s+([A-Za-z0-9][^\r\n.,!?;:]{0,39})$/i, '设置 $1'],
     [/^Show\s+(\d+)\s+earlier\s+posts?\s*\((\d+)\s+older\)$/i, '显示前 $1 条更早发言（共 $2 条）'],
     [/^Showing\s+first\s+(\d+)\s+references$/i, '显示前 $1 个引用'],
     [/^Signed\s+in:\s*(.+)$/i, '已登录：$1'],
@@ -781,9 +816,6 @@ export function createI18nController(dict, version, restoreDomFn) {
     [/^(.+?)\s+\(Remote\)$/, '$1（远程）'],
     [/^(?!.+\b(?:been|was|were|is|are|be|has|have|had)\s+archived$)([^\r\n.!?]{1,48})\s+archived$/, '$1 已归档'],
     [/^(?!.+\b(?:been|was|were|is|are|be|has|have|had)\s+deleted$)([^\r\n.!?]{1,48})\s+deleted$/, '$1 已删除'],
-    [/^Failed\s+to\s+archive\s+(.+)$/, '归档 $1 失败'],
-    [/^Failed\s+to\s+delete\s+([^:]+):\s*(.+)$/, '删除 $1 失败：$2'],
-    [/^Failed\s+to\s+delete\s+(.+)$/, '删除 $1 失败'],
   ];
 
   // 仅针对按钮与控件属性（title / aria-label / placeholder）的动态前缀动作规则，防止正文误命中
@@ -1257,7 +1289,10 @@ export function createI18nController(dict, version, restoreDomFn) {
 
   const translateTextNode = (node) => {
     const currentVal = node.nodeValue;
-    if (!currentVal) return;
+    if (!currentVal) {
+      origTextMap.delete(node);
+      return;
+    }
 
     const rec = origTextMap.get(node);
     if (rec && rec.lastVal === currentVal && rec.ver === VERSION) {
@@ -1271,8 +1306,10 @@ export function createI18nController(dict, version, restoreDomFn) {
       if (node.nodeValue !== nextVal) {
         node.nodeValue = nextVal;
       }
-    } else if (rec && rec.lastVal === currentVal) {
-      node.nodeValue = origRaw;
+    } else if (rec) {
+      if (rec.lastVal === currentVal) {
+        node.nodeValue = origRaw;
+      }
       origTextMap.delete(node);
     }
   };

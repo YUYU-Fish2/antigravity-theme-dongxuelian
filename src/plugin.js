@@ -18,11 +18,13 @@ import {
   removeDesktopLaunchConfig,
 } from './launch.js';
 import {
+  isProcessAlive,
   prepareRuntimePayload,
   readLiveWatcherPid,
   readPackageVersion,
   removeOnce,
   resolveRootPath,
+  tryStopWatcherByPidFile,
   unlinkQuietly,
 } from './runner.js';
 
@@ -103,6 +105,8 @@ export function getPluginPaths({
     launchStateFile: join(resolvedDataDir, 'launch-state.json'),
     statusFile: join(resolvedDataDir, 'integration-state.json'),
     pidFile: join(resolvedDataDir, '.watch.pid'),
+    sidecarPidFile: join(resolvedDataDir, '.sidecar.pid'),
+    payloadCacheFile: join(resolvedDataDir, 'payload-cache.json'),
     logFile: join(resolvedDataDir, 'sidecar.log'),
   };
 }
@@ -127,7 +131,7 @@ export function buildPluginLogoSvg() {
 export function buildSidecarManifest() {
   return {
     command: 'node',
-    args: ['--max-semi-space-size=1', '--max-old-space-size=48', 'main.mjs'],
+    args: ['--max-semi-space-size=8', '--max-old-space-size=48', 'main.mjs'],
     restart_policy: 'always',
     display_name: '冬雪莲主题',
     description: '由 Antigravity 宿主托管生命周期并零轮询注入暖纸白浅色主题与简体中文汉化',
@@ -264,14 +268,15 @@ export function buildPluginPanelHtml() {
  * 由 Antigravity 宿主自动拉起与退出，内置快捷方式自愈、事件驱动注入与轻量 Web 控制面板。
  */
 export function buildSidecarEntrySource() {
-  return `import { existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from 'node:fs';
+  return `import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, watch, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getPortFilePath } from '../../src/cdp.js';
 import { ensureDesktopLaunchConfig, inspectDesktopLaunch } from '../../src/launch.js';
-import { createDaemonLogger, removeOnce, startWatch } from '../../src/runner.js';
+import { createDaemonLogger, removeOnce, startWatch, unlinkPidFileIfOwned } from '../../src/runner.js';
 
 const PLUGIN_ID = '${PLUGIN_ID}';
 const SIDECAR_DIR = dirname(fileURLToPath(import.meta.url));
@@ -285,10 +290,16 @@ const SETTINGS_FILE = join(DATA_DIR, 'settings.json');
 const LAUNCH_STATE_FILE = join(DATA_DIR, 'launch-state.json');
 const STATUS_FILE = join(DATA_DIR, 'integration-state.json');
 const PID_FILE = join(DATA_DIR, '.watch.pid');
+const SIDECAR_PID_FILE = join(DATA_DIR, '.sidecar.pid');
+const PAYLOAD_CACHE_FILE = join(DATA_DIR, 'payload-cache.json');
 const LOG_FILE = join(DATA_DIR, 'sidecar.log');
 const PANEL_HTML_PATH = join(SIDECAR_DIR, 'panel.html');
 
 mkdirSync(DATA_DIR, { recursive: true });
+try { writeFileSync(SIDECAR_PID_FILE, \`\${process.pid}\\n\`, 'utf8'); } catch {}
+process.on('exit', () => {
+  try { unlinkPidFileIfOwned(SIDECAR_PID_FILE); } catch {}
+});
 // Windows 下宿主从 plugin 子目录拉起进程会占用目录句柄，主动切换到数据目录避免影响插件升级与卸载
 try { process.chdir(DATA_DIR); } catch {}
 
@@ -420,12 +431,12 @@ async function syncController() {
     return;
   }
 
-  await repairShortcuts(false);
   watcher = await startWatch({
     rootDir,
     port: settings.port,
     portFile: getPortFilePath({ home: HOME }),
     pidFile: PID_FILE,
+    payloadCacheFile: PAYLOAD_CACHE_FILE,
     avatar: settings.avatar,
     shift: settings.shift,
     i18n: settings.i18n,
@@ -449,6 +460,8 @@ async function syncController() {
       }
     },
   });
+  // 快捷方式自愈仅影响下次客户端启动，放到首轮挂载之后异步执行，不阻塞首屏注入
+  void repairShortcuts(false).catch(() => {});
 }
 
 const scheduleSync = () => {
@@ -478,10 +491,10 @@ watchTargetFile(SETTINGS_FILE);
 
 async function startWebUiServer() {
   const portStr = process.env.ANTIGRAVITY_SIDECAR_WEB_PORT;
-  if (!portStr) return null;
+  if (portStr === undefined || portStr === '') return null;
   const port = Number.parseInt(portStr, 10);
-  if (!Number.isInteger(port) || port < 1) return null;
-  const token = process.env.ANTIGRAVITY_SIDECAR_UI_TOKEN || '';
+  if (!Number.isInteger(port) || port < 0 || port > 65535) return null;
+  const token = (process.env.ANTIGRAVITY_SIDECAR_UI_TOKEN || '').trim() || randomBytes(24).toString('hex');
 
   const getPanelHtml = () => readFileSync(PANEL_HTML_PATH, 'utf8');
   const handleGetState = () => ({ status: currentState, settings: readSettings() });
@@ -521,10 +534,19 @@ async function startWebUiServer() {
   const preloadScript =
     "(function(){const p=new URLSearchParams(location.search);const t=p.get('token');" +
     "window.sidecar={fetch:(u,o={})=>fetch(u,{...o,headers:{...(o.headers||{}),...(t?{'x-sidecar-token':t}:{})}})};})();";
+  let actualPort = port;
   const server = createServer((req, res) => {
-    const url = new URL(req.url || '/', \`http://127.0.0.1:\${port}\`);
-    if (req.method !== 'GET' && token) {
-      const provided = req.headers['x-sidecar-token'] || url.searchParams.get('token');
+    let url;
+    try {
+      url = new URL(req.url || '/', \`http://127.0.0.1:\${actualPort}\`);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end('{"error":"bad request"}');
+      return;
+    }
+    if (req.method !== 'GET') {
+      const headerToken = typeof req.headers['x-sidecar-token'] === 'string' ? req.headers['x-sidecar-token'] : '';
+      const provided = headerToken || url.searchParams.get('token') || '';
       if (provided !== token) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end('{"error":"unauthorized"}');
@@ -547,22 +569,39 @@ async function startWebUiServer() {
       return;
     }
     if (req.method === 'POST' && ['/api/settings', '/api/reinject', '/api/repair-launch'].includes(url.pathname)) {
-      let raw = '';
+      const chunks = [];
+      let totalBytes = 0;
       let aborted = false;
       req.on('data', (c) => {
         if (aborted) return;
-        raw += c;
-        if (raw.length > 16384) {
+        const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+        totalBytes += buf.length;
+        if (totalBytes > 16384) {
           aborted = true;
           req.pause();
           res.writeHead(413, { 'Content-Type': 'application/json' });
           res.end('{"error":"payload too large"}', () => req.destroy());
+          return;
         }
+        chunks.push(buf);
       });
       req.on('end', async () => {
         if (aborted) return;
+        let payload = {};
         try {
-          const payload = raw ? JSON.parse(raw) : {};
+          const raw = totalBytes > 0 ? Buffer.concat(chunks, totalBytes).toString('utf8').trim() : '';
+          payload = raw ? JSON.parse(raw) : {};
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"invalid json"}');
+          return;
+        }
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"invalid json"}');
+          return;
+        }
+        try {
           const out =
             url.pathname === '/api/settings'
               ? await handleUpdateSettings(payload)
@@ -581,13 +620,50 @@ async function startWebUiServer() {
     res.writeHead(404);
     res.end('Not found');
   });
-  await new Promise((resolveListen) => server.listen(port, '127.0.0.1', resolveListen));
-  return { close: () => new Promise((r) => server.close(r)) };
+  try {
+    await new Promise((resolveListen, rejectListen) => {
+      const onError = (err) => {
+        server.off('listening', onListening);
+        rejectListen(err);
+      };
+      const onListening = () => {
+        server.off('error', onError);
+        resolveListen();
+      };
+      server.once('error', onError);
+      server.once('listening', onListening);
+      server.listen(port, '127.0.0.1');
+    });
+  } catch (err) {
+    logger.error(\`[冬雪莲] Sidecar Web UI 监听端口 \${port} 失败：\${err.message}\`);
+    try { server.close(); } catch {}
+    return null;
+  }
+  actualPort = server.address()?.port || port;
+  server.on('error', (err) => {
+    logger.warn(\`[冬雪莲] Sidecar Web UI 服务异常：\${err.message}\`);
+  });
+  writeStatus({ webPort: actualPort });
+  return {
+    port: actualPort,
+    close: () =>
+      new Promise((r) => {
+        server.close(r);
+        server.closeAllConnections?.();
+      }),
+  };
 }
 
-const serverHandle = await startWebUiServer();
+let serverHandle = null;
+// 先发起首轮 CDP 注入，再并行拉起控制面板 HTTP 服务，避免面板初始化阻塞首屏渲染
 scheduleSync();
-await applying;
+const serverPromise = startWebUiServer()
+  .then((handle) => {
+    serverHandle = handle;
+    return handle;
+  })
+  .catch(() => null);
+await Promise.all([applying, serverPromise]);
 logger.log('[冬雪莲] Antigravity 插件 Sidecar 已启动（宿主托管，零系统自启与轮询）。');
 
 let shuttingDown = false;
@@ -599,11 +675,14 @@ async function shutdown() {
     try { w.close(); } catch {}
   }
   watchers.length = 0;
+  await applying.catch(() => {});
   if (watcher) {
     await watcher.stop().catch(() => {});
     watcher = null;
   }
   writeStatus({ state: 'stopped', attachedCount: 0, message: 'Sidecar 已停止' });
+  unlinkPidFileIfOwned(SIDECAR_PID_FILE);
+  await serverPromise.catch(() => {});
   if (serverHandle && typeof serverHandle.close === 'function') {
     await Promise.resolve(serverHandle.close()).catch(() => {});
   }
@@ -662,6 +741,16 @@ export async function installPlugin(options = {}) {
   mkdirSync(join(paths.pluginDir, 'src'), { recursive: true });
   mkdirSync(join(paths.pluginDir, 'assets'), { recursive: true });
   mkdirSync(paths.dataDir, { recursive: true });
+
+  // 预热预编译载荷缓存，保证首次拉起 Sidecar 直接命中热缓存
+  prepareRuntimePayload({
+    rootDir,
+    avatar,
+    shift,
+    i18n,
+    i18nOverride,
+    cacheFile: paths.payloadCacheFile,
+  });
 
   for (const name of BUNDLED_SRC_FILES) {
     cpSync(join(rootDir, 'src', name), join(paths.pluginDir, 'src', name));
@@ -783,15 +872,12 @@ export async function uninstallPlugin(options = {}) {
     execPowerShell: options.execPowerShell,
   });
 
-  if (existsSync(paths.configFile)) {
-    const config = readJsonObject(paths.configFile);
-    if (config.plugins && Object.prototype.hasOwnProperty.call(config.plugins, PLUGIN_ID)) {
-      delete config.plugins[PLUGIN_ID];
+  const sidecarStop = tryStopWatcherByPidFile(paths.sidecarPidFile, logger);
+  if (sidecarStop.signaled && sidecarStop.pid) {
+    const deadline = Date.now() + 600;
+    while (isProcessAlive(sidecarStop.pid) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 30));
     }
-    if (config.sidecars && Object.prototype.hasOwnProperty.call(config.sidecars, `${PLUGIN_ID}/${PLUGIN_SIDECAR_NAME}`)) {
-      delete config.sidecars[`${PLUGIN_ID}/${PLUGIN_SIDECAR_NAME}`];
-    }
-    atomicWriteJson(paths.configFile, config);
   }
 
   const portFile = options.portFile || getPortFilePath({ platform, env, home });
@@ -804,6 +890,17 @@ export async function uninstallPlugin(options = {}) {
   }).catch(() => ({ stoppedWatcher: false }));
   if (removeRes?.stoppedWatcher) {
     await new Promise((r) => setTimeout(r, 150));
+  }
+
+  if (existsSync(paths.configFile)) {
+    const config = readJsonObject(paths.configFile);
+    if (config.plugins && Object.prototype.hasOwnProperty.call(config.plugins, PLUGIN_ID)) {
+      delete config.plugins[PLUGIN_ID];
+    }
+    if (config.sidecars && Object.prototype.hasOwnProperty.call(config.sidecars, `${PLUGIN_ID}/${PLUGIN_SIDECAR_NAME}`)) {
+      delete config.sidecars[`${PLUGIN_ID}/${PLUGIN_SIDECAR_NAME}`];
+    }
+    atomicWriteJson(paths.configFile, config);
   }
 
   let removedPluginDir = false;
@@ -819,6 +916,12 @@ export async function uninstallPlugin(options = {}) {
 
   unlinkQuietly(paths.statusFile);
   unlinkQuietly(paths.pidFile);
+  unlinkQuietly(paths.sidecarPidFile);
+  unlinkQuietly(paths.payloadCacheFile);
+  unlinkQuietly(`${paths.pidFile}.lock`);
+  if (existsSync(paths.launchStateFile) && Object.keys(readJsonObject(paths.launchStateFile)).length === 0) {
+    unlinkQuietly(paths.launchStateFile);
+  }
 
   logger.log(
     `[冬雪莲] 插件模式卸载完成：${removedPluginDir ? '已删除插件目录，' : ''}${revertRes.revertedCount > 0 ? `已撤回 ${revertRes.revertedCount} 个快捷方式参数，` : ''}已清理配置项。`,
@@ -849,10 +952,18 @@ export function getPluginStatus(options = {}) {
 
   const installed = existsSync(paths.manifestFile) && existsSync(paths.sidecarManifestFile);
   const config = readJsonObject(paths.configFile);
-  const pluginEntry = config.plugins?.[PLUGIN_ID];
-  const enabled = installed && pluginEntry?.enabled !== false;
+  let enabled = false;
+  if (installed) {
+    if (config.plugins && typeof config.plugins === 'object') {
+      enabled =
+        Object.prototype.hasOwnProperty.call(config.plugins, PLUGIN_ID) &&
+        config.plugins[PLUGIN_ID]?.enabled !== false;
+    } else {
+      enabled = true;
+    }
+  }
   const settings = existsSync(paths.settingsFile) ? readJsonObject(paths.settingsFile) : null;
-  const sidecarPid = readLiveWatcherPid(paths.pidFile);
+  const sidecarPid = readLiveWatcherPid(paths.sidecarPidFile) ?? readLiveWatcherPid(paths.pidFile);
   const rawIntegration = existsSync(paths.statusFile) ? readJsonObject(paths.statusFile) : null;
   const integration =
     !sidecarPid && rawIntegration && rawIntegration.state === 'active'

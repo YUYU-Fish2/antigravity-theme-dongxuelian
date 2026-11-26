@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer as createNetServer } from 'node:net';
 import test from 'node:test';
 import { buildThemeCss, loadThemeAssets } from '../src/assets.js';
 import { buildInjectScript } from '../src/cdp.js';
@@ -24,11 +25,13 @@ import {
   mergeDesktopEntry,
   parseLnkBuffer,
   removeDesktopLaunchConfig,
+  serializeAsciiJson,
   stripDebugArguments,
 } from '../src/launch.js';
 import {
   PLUGIN_ID,
   buildPluginPanelHtml,
+  buildSidecarManifest,
   getPluginPaths,
   getPluginStatus,
   installPlugin,
@@ -200,6 +203,13 @@ test('installPlugin -> getPluginStatus -> uninstallPlugin 完整隔离闭环并�
   );
 
   const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
+  const isolatedEnv = {
+    ...process.env,
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: join(home, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(home, 'AppData', 'Local'),
+  };
   let sidecarChild = null;
 
   try {
@@ -207,57 +217,77 @@ test('installPlugin -> getPluginStatus -> uninstallPlugin 完整隔离闭环并�
       rootDir: ROOT,
       home,
       platform: 'win32',
-      env: { ...process.env, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming') },
+      env: isolatedEnv,
       logger: silentLogger,
     });
     assert.equal(installRes.installed, true);
 
-    const paths = getPluginPaths({ home });
+    const paths = getPluginPaths({ home, env: isolatedEnv });
     assert.equal(existsSync(paths.manifestFile), true);
     assert.equal(existsSync(paths.sidecarManifestFile), true);
     assert.equal(existsSync(paths.sidecarEntryFile), true);
     assert.equal(existsSync(paths.panelHtmlFile), true);
+    assert.equal(existsSync(paths.payloadCacheFile), true, '安装应预热生成 payload-cache.json');
+    assert.ok(buildSidecarManifest().args.includes('--max-semi-space-size=8'), 'Sidecar 新生代堆应放宽至 8MB');
 
     const cfg = JSON.parse(readFileSync(configFile, 'utf8'));
     assert.equal(cfg.plugins[PLUGIN_ID].enabled, true);
     assert.equal(cfg.plugins['antigravity-pulse'].enabled, true, '安装不应破坏其他已有插件开关');
     assert.equal(cfg.userSettings.themeMode, 'THEME_MODE_INHERIT');
 
-    const status = getPluginStatus({ home, platform: 'win32', env: { USERPROFILE: home } });
+    const status = getPluginStatus({ home, platform: 'win32', env: isolatedEnv });
     assert.equal(status.installed, true);
     assert.equal(status.enabled, true);
     assert.equal(status.launch.configured, true);
 
-    // 验证 sidecars/theme/main.mjs 在真实 Node 子进程与回退 HTTP UI 服务模式下正常启动和响应
-    const webPort = 47000 + (process.pid % 10000);
+    // 验证 sidecars/theme/main.mjs 在真实 Node 子进程与回退 HTTP UI 服务模式下正常启动（port=0 动态分配）和响应
+    let sidecarStderr = '';
     sidecarChild = spawn(process.execPath, [paths.sidecarEntryFile], {
       cwd: paths.sidecarDir,
       env: {
-        ...process.env,
-        USERPROFILE: home,
-        HOME: home,
-        ANTIGRAVITY_SIDECAR_WEB_PORT: String(webPort),
+        ...isolatedEnv,
+        ANTIGRAVITY_SIDECAR_WEB_PORT: '0',
         ANTIGRAVITY_SIDECAR_UI_TOKEN: 'test-token-123',
         ANTIGRAVITY_EXECUTABLE_DATA_DIR: paths.dataDir,
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    sidecarChild.stderr.on('data', (chunk) => {
+      sidecarStderr += chunk.toString('utf8');
     });
 
     const deadline = Date.now() + 4000;
+    let webPort = null;
     let stateJson = null;
     while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${webPort}/api/state`);
-        if (res.ok) {
-          stateJson = await res.json();
-          break;
-        }
-      } catch {
-        await new Promise((r) => setTimeout(r, 80));
+      if (sidecarChild.exitCode !== null) {
+        assert.fail(`Sidecar 子进程提前退出（exitCode=${sidecarChild.exitCode}）：${sidecarStderr}`);
       }
+      if (!webPort && existsSync(paths.statusFile)) {
+        try {
+          const st = JSON.parse(readFileSync(paths.statusFile, 'utf8'));
+          if (Number.isInteger(st.webPort) && st.webPort > 0) {
+            webPort = st.webPort;
+          }
+        } catch {}
+      }
+      if (webPort) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${webPort}/api/state`);
+          if (res.ok) {
+            stateJson = await res.json();
+            break;
+          }
+        } catch {
+          // 继续轮询
+        }
+      }
+      await new Promise((r) => setTimeout(r, 80));
     }
+    assert.ok(webPort, 'Sidecar 应在 integration-state.json 中写入动态分配的 webPort');
     assert.ok(stateJson, 'Sidecar 回退控制面板服务应成功响应 /api/state');
     assert.equal(stateJson.settings.avatar, true);
+    assert.equal(existsSync(paths.sidecarPidFile), true, 'Sidecar 应写入独立的 .sidecar.pid');
 
     const unauthPost = await fetch(`http://127.0.0.1:${webPort}/api/settings`, {
       method: 'POST',
@@ -275,6 +305,21 @@ test('installPlugin -> getPluginStatus -> uninstallPlugin 完整隔离闭环并�
     const updatedState = await authPost.json();
     assert.equal(updatedState.settings.avatar, false);
 
+    // 验证畸形 JSON 返回 400、超限 body 返回 413
+    const badJsonPost = await fetch(`http://127.0.0.1:${webPort}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-sidecar-token': 'test-token-123' },
+      body: '{invalid-json',
+    });
+    assert.equal(badJsonPost.status, 400);
+
+    const bigPost = await fetch(`http://127.0.0.1:${webPort}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-sidecar-token': 'test-token-123' },
+      body: JSON.stringify({ pad: 'a'.repeat(17000) }),
+    });
+    assert.equal(bigPost.status, 413);
+
     sidecarChild.kill('SIGTERM');
     await new Promise((resolveExit) => sidecarChild.once('exit', resolveExit));
     sidecarChild = null;
@@ -282,13 +327,15 @@ test('installPlugin -> getPluginStatus -> uninstallPlugin 完整隔离闭环并�
     const uninstallRes = await uninstallPlugin({
       home,
       platform: 'win32',
-      env: { ...process.env, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming') },
+      env: isolatedEnv,
       portFile: join(dir, 'missing-port'),
       logger: silentLogger,
     });
     assert.equal(uninstallRes.uninstalled, true);
     assert.equal(uninstallRes.removedPluginDir, true);
     assert.equal(existsSync(paths.pluginDir), false);
+    assert.equal(existsSync(paths.sidecarPidFile), false);
+    assert.equal(existsSync(paths.payloadCacheFile), false);
     const cfgAfter = JSON.parse(readFileSync(configFile, 'utf8'));
     assert.equal(cfgAfter.plugins[PLUGIN_ID], undefined);
     assert.equal(cfgAfter.plugins['antigravity-pulse'].enabled, true);
@@ -411,6 +458,199 @@ test('回归测试：uninstallPlugin 先停进程再删目录、过期状态修�
     if (dummySidecar && dummySidecar.exitCode === null) {
       try {
         dummySidecar.kill();
+      } catch {}
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('回归测试：launch 解析边界、Sidecar 空 token 保护/端口冲突容错、getPluginStatus 与 uninstallPlugin 竞态清理', async () => {
+  // 1. serializeAsciiJson 将非 ASCII 路径转为纯 ASCII \uXXXX
+  const asciiJson = serializeAsciiJson([{ path: 'C:\\Users\\冬雪莲\\Antigravity.lnk', args: '--lang=中文' }]);
+  assert.equal(/^[\x20-\x7e]+$/.test(asciiJson), true);
+  assert.deepEqual(JSON.parse(asciiJson), [{ path: 'C:\\Users\\冬雪莲\\Antigravity.lnk', args: '--lang=中文' }]);
+
+  // 2. tokenizeArgs / hasDebugFlags / mergeDebugArguments 支持转义引号与单引号带空格参数
+  const quotedArgs = `--label="a \\"b\\" c" --dir='C:\\My Data\\dir' --remote-debugging-port=0`;
+  assert.deepEqual(hasDebugFlags(quotedArgs), { hasPort: true, hasAddress: false });
+  const completedArgs = mergeDebugArguments(quotedArgs);
+  assert.deepEqual(completedArgs.added, [DEBUG_ADDRESS_FLAG]);
+  assert.equal(
+    stripDebugArguments(completedArgs.args, [DEBUG_PORT_FLAG, DEBUG_ADDRESS_FLAG]),
+    `--label="a \\"b\\" c" --dir='C:\\My Data\\dir'`,
+  );
+
+  // 3. Linux .desktop：引号感知 % 占位符、--remote-debugging-address 检查与无尾部空行累积
+  const quotedFieldDesktop = [
+    '[Desktop Entry]',
+    'Name=Antigravity',
+    'Exec="/opt/My %f/antigravity" %U',
+    '',
+  ].join('\n');
+  const mergedDesktop = mergeDesktopEntry(quotedFieldDesktop);
+  assert.ok(
+    mergedDesktop.includes('Exec="/opt/My %f/antigravity" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 %U'),
+  );
+  assert.equal(mergeDesktopEntry(mergedDesktop), mergedDesktop, '重复调用 mergeDesktopEntry 不应累积尾部空行');
+
+  const partialDesktop = '[Desktop Entry]\nExec=/opt/antigravity --remote-debugging-port=0\n';
+  const completedDesktop = mergeDesktopEntry(partialDesktop);
+  assert.ok(completedDesktop.includes('--remote-debugging-port=0 --remote-debugging-address=127.0.0.1'));
+  assert.equal((completedDesktop.match(/--remote-debugging-port/g) || []).length, 1);
+
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-plugin-hardening-'));
+  const home = join(dir, 'home');
+  const isolatedEnv = {
+    ...process.env,
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: join(home, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(home, 'AppData', 'Local'),
+  };
+  let occupant = null;
+  let sidecarEmptyToken = null;
+  let sidecarPortBusy = null;
+  let sidecarReal = null;
+
+  try {
+    // 验证 inspectDesktopLaunch 在 Linux 缺少 --remote-debugging-address 时判定未就绪
+    const linuxDesktopDir = join(home, '.local', 'share', 'applications');
+    mkdirSync(linuxDesktopDir, { recursive: true });
+    writeFileSync(join(linuxDesktopDir, 'antigravity.desktop'), partialDesktop, 'utf8');
+    assert.equal(inspectDesktopLaunch({ platform: 'linux', home, env: isolatedEnv }).configured, false);
+
+    // 4. parseLnkBuffer 拼接非空 CommonPathSuffixUnicode
+    const header = Buffer.alloc(76);
+    header.writeUInt32LE(0x4c, 0);
+    header.writeUInt32LE(0x02 | 0x80, 0x14);
+    const baseUni = Buffer.from('C:\\Program Files\\Antigravity\0', 'utf16le');
+    const suffixUni = Buffer.from('Antigravity.exe\0', 'utf16le');
+    const infoHdrLen = 0x24;
+    const infoBuf = Buffer.alloc(infoHdrLen + baseUni.length + suffixUni.length);
+    infoBuf.writeUInt32LE(infoBuf.length, 0);
+    infoBuf.writeUInt32LE(infoHdrLen, 4);
+    infoBuf.writeUInt32LE(0x01, 8);
+    infoBuf.writeUInt32LE(infoHdrLen, 28);
+    infoBuf.writeUInt32LE(infoHdrLen + baseUni.length, 32);
+    baseUni.copy(infoBuf, infoHdrLen);
+    suffixUni.copy(infoBuf, infoHdrLen + baseUni.length);
+    const lnkWithSuffix = parseLnkBuffer(Buffer.concat([header, infoBuf]));
+    assert.equal(lnkWithSuffix?.target, 'C:\\Program Files\\Antigravity\\Antigravity.exe');
+
+    // 5. getPluginStatus enabled 与 readPluginEnabled 对缺省本插件但有其他插件的一致性
+    const silentLogger = { log: () => {}, warn: () => {}, error: () => {} };
+    await installPlugin({ rootDir: ROOT, home, platform: 'win32', env: isolatedEnv, logger: silentLogger });
+    const paths = getPluginPaths({ home, env: isolatedEnv });
+    writeFileSync(
+      paths.configFile,
+      JSON.stringify({ plugins: { 'antigravity-pulse': { enabled: true } } }),
+      'utf8',
+    );
+    const missingSelfStatus = getPluginStatus({ home, platform: 'win32', env: isolatedEnv });
+    assert.equal(missingSelfStatus.installed, true);
+    assert.equal(missingSelfStatus.enabled, false, 'config.plugins 含其他插件但缺省本插件时应为 false');
+
+    // 6. Sidecar 未设置 UI_TOKEN 时生成随机临时 token 保护写接口，且监听端口占用时不静默崩溃
+    writeFileSync(
+      paths.configFile,
+      JSON.stringify({ plugins: { [PLUGIN_ID]: { enabled: true } } }),
+      'utf8',
+    );
+    sidecarEmptyToken = spawn(process.execPath, [paths.sidecarEntryFile], {
+      cwd: paths.sidecarDir,
+      env: {
+        ...isolatedEnv,
+        ANTIGRAVITY_SIDECAR_WEB_PORT: '0',
+        ANTIGRAVITY_SIDECAR_UI_TOKEN: '',
+        ANTIGRAVITY_EXECUTABLE_DATA_DIR: paths.dataDir,
+      },
+      stdio: 'ignore',
+    });
+    const waitPortDeadline = Date.now() + 4000;
+    let dynPort = null;
+    while (Date.now() < waitPortDeadline) {
+      if (existsSync(paths.statusFile)) {
+        try {
+          const st = JSON.parse(readFileSync(paths.statusFile, 'utf8'));
+          if (Number.isInteger(st.webPort) && st.webPort > 0) {
+            dynPort = st.webPort;
+            break;
+          }
+        } catch {}
+      }
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    assert.ok(dynPort);
+    const getStateRes = await fetch(`http://127.0.0.1:${dynPort}/api/state`);
+    assert.equal(getStateRes.status, 200);
+    const noTokenPost = await fetch(`http://127.0.0.1:${dynPort}/api/reinject`, { method: 'POST', body: '{}' });
+    assert.equal(noTokenPost.status, 401, '空 UI_TOKEN 时也应生成临时 token 保护写接口');
+    sidecarEmptyToken.kill('SIGTERM');
+    await new Promise((r) => sidecarEmptyToken.once('exit', r));
+    sidecarEmptyToken = null;
+
+    // 端口占用时 Sidecar 不崩溃并记录错误日志
+    occupant = createNetServer();
+    await new Promise((r) => occupant.listen(0, '127.0.0.1', r));
+    const busyPort = occupant.address().port;
+    sidecarPortBusy = spawn(process.execPath, [paths.sidecarEntryFile], {
+      cwd: paths.sidecarDir,
+      env: {
+        ...isolatedEnv,
+        ANTIGRAVITY_SIDECAR_WEB_PORT: String(busyPort),
+        ANTIGRAVITY_EXECUTABLE_DATA_DIR: paths.dataDir,
+      },
+      stdio: 'ignore',
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(sidecarPortBusy.exitCode, null, 'Web UI 端口占用时 Sidecar 主守护不应崩溃退出');
+    sidecarPortBusy.kill('SIGTERM');
+    await new Promise((r) => sidecarPortBusy.once('exit', r));
+    sidecarPortBusy = null;
+    await new Promise((r) => occupant.close(r));
+    occupant = null;
+
+    // 7. 真实 Sidecar 运行时执行 uninstallPlugin()：能通过 .sidecar.pid 彻底停机，并清理空 launch-state.json
+    writeFileSync(paths.launchStateFile, '{}\n', 'utf8');
+    sidecarReal = spawn(process.execPath, [paths.sidecarEntryFile], {
+      cwd: paths.sidecarDir,
+      env: {
+        ...isolatedEnv,
+        ANTIGRAVITY_EXECUTABLE_DATA_DIR: paths.dataDir,
+      },
+      stdio: 'ignore',
+    });
+    const pidWait = Date.now() + 3000;
+    while (Date.now() < pidWait) {
+      if (existsSync(paths.sidecarPidFile) && readFileSync(paths.sidecarPidFile, 'utf8').trim() === String(sidecarReal.pid)) {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    const realExitP = new Promise((r) => sidecarReal.once('exit', r));
+    const unRes = await uninstallPlugin({
+      home,
+      platform: 'win32',
+      env: isolatedEnv,
+      portFile: join(dir, 'missing-port'),
+      logger: silentLogger,
+    });
+    await realExitP;
+    sidecarReal = null;
+    assert.equal(unRes.removedPluginDir, true);
+    assert.equal(existsSync(paths.sidecarPidFile), false);
+    assert.equal(existsSync(paths.launchStateFile), false, '空的 launch-state.json 应在卸载后一并清理');
+  } finally {
+    for (const proc of [sidecarEmptyToken, sidecarPortBusy, sidecarReal]) {
+      if (proc && proc.exitCode === null) {
+        try {
+          proc.kill('SIGKILL');
+        } catch {}
+      }
+    }
+    if (occupant) {
+      try {
+        await new Promise((r) => occupant.close(r));
       } catch {}
     }
     rmSync(dir, { recursive: true, force: true });

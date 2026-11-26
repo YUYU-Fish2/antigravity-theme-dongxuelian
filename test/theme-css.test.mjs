@@ -103,4 +103,14 @@ test('包含 @container 响应式抱书构图、防穿透卡片、渐隐条修�
       !/\[data-testid="builtin-browser-pane"\]\s*:is\(input,\s*\[role="combobox"\]\)\s*\{/s.test(css),
     '内置浏览器地址栏应由外层胶囊承接纸白底，不得强行覆盖 browser-url-input 的 text-transparent 导致与 browser-url-display 重叠',
   );
+  const stageBlockMatch = css.match(/body\.theme-light\s+\[data-dxl-stage="conversation"\]\s*\{([^}]*)\}/);
+  assert.ok(stageBlockMatch, '缺少 body.theme-light [data-dxl-stage="conversation"] 规则块');
+  assert.ok(
+    !/\boverflow\s*:\s*hidden\b/i.test(stageBlockMatch[1]),
+    '[data-dxl-stage="conversation"] 不应声明 overflow: hidden 以免降级命中滚动容器时锁死垂直滚动',
+  );
+  assert.ok(
+    /\boverflow-x\s*:\s*clip\b/i.test(stageBlockMatch[1]),
+    '[data-dxl-stage="conversation"] 应使用 overflow-x: clip 仅裁切横向溢出',
+  );
 });

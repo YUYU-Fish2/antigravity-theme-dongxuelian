@@ -179,7 +179,15 @@ export function buildAsarArchive(archive, overrides = new Map()) {
       }
       const origOffset = Number(child.offset);
       const size = Number(child.size);
-      const slice = archive.buffer.subarray(archive.dataStart + origOffset, archive.dataStart + origOffset + size);
+      if (!Number.isFinite(origOffset) || !Number.isFinite(size) || origOffset < 0 || size < 0) {
+        throw new Error(`ASAR 源条目偏移或大小无效：${childPath}`);
+      }
+      const start = archive.dataStart + origOffset;
+      const end = start + size;
+      if (end > archive.buffer.length) {
+        throw new Error(`ASAR 源条目超出文件范围：${childPath}`);
+      }
+      const slice = archive.buffer.subarray(start, end);
       if (slice.length !== size) {
         throw new Error(`ASAR 源条目读取不完整：${childPath}`);
       }
@@ -204,12 +212,18 @@ export function buildAsarArchive(archive, overrides = new Map()) {
     }
     const parts = entryPath.split('/').filter(Boolean);
     const fileName = parts.pop();
+    if (!fileName) {
+      continue;
+    }
     let dirNode = newHeader;
     for (const part of parts) {
       if (!dirNode.files[part]) {
         dirNode.files[part] = { files: {} };
       }
       dirNode = dirNode.files[part];
+      if (!dirNode || typeof dirNode !== 'object' || !dirNode.files || typeof dirNode.files !== 'object') {
+        throw new Error(`ASAR 覆盖路径冲突：中间节点「${part}」不是目录（${entryPath}）`);
+      }
     }
     const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
     dirNode.files[fileName] = {
@@ -264,7 +278,7 @@ export function patchMainJsSource(mainSource) {
     return `${clean.slice(0, match.index)}${hookBlock}${eol}${clean.slice(match.index)}`;
   }
 
-  const useStrictMatch = clean.match(/^(['"])use strict\1;\s*\r?\n/);
+  const useStrictMatch = clean.match(/^\s*(['"])use strict\1;[ \t]*(?:\r?\n)?/);
   if (useStrictMatch) {
     const insertAt = useStrictMatch[0].length;
     return `${clean.slice(0, insertAt)}${hookBlock}${eol}${clean.slice(insertAt)}`;

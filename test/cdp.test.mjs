@@ -16,7 +16,7 @@ import {
   readPort,
 } from '../src/cdp.js';
 import { MiniWebSocket } from '../src/net.js';
-import { injectOnce, parseCliArgs, removeOnce, startWatch } from '../src/runner.js';
+import { injectOnce, parseCliArgs, prepareRuntimePayload, removeOnce, startWatch } from '../src/runner.js';
 import { startMockCdpServer } from './helpers/mock-cdp.mjs';
 import { createMockAntigravityPage } from './helpers/mock-dom.mjs';
 
@@ -681,6 +681,293 @@ test('MiniWebSocket 关闭竞态与缓冲复位安全，startWatch.stop 不误�
     await watcher.stop();
     assert.equal(existsSync(pidFile), true, '新进程覆写 PID 后，旧进程 stop 不应误删文件');
     assert.equal(readFileSync(pidFile, 'utf8').trim(), '999999');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('回归测试：MiniWebSocket UTF-8 关闭原因截断/半开兜底/64位帧长校验，startWatch.stop 竞态与缺失目录重建监听', async () => {
+  // 1. MiniWebSocket.close 按 UTF-8 字节截断 reason <= 123 字节，半开 Close 帧兜底销毁，len=127 超限报错
+  const wsSockets = new Set();
+  let lastClosePayload = null;
+  const wsServer = createServer();
+  wsServer.on('upgrade', (req, socket) => {
+    wsSockets.add(socket);
+    socket.on('close', () => wsSockets.delete(socket));
+    const key = req.headers['sec-websocket-key'];
+    const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+
+    if (req.url === '/utf8-close') {
+      let rx = Buffer.alloc(0);
+      socket.on('data', (chunk) => {
+        rx = Buffer.concat([rx, chunk]);
+        if (rx.length < 6) return;
+        const lenByte = rx[1] & 0x7f;
+        if (lenByte >= 126) {
+          lastClosePayload = Buffer.alloc(lenByte + 10);
+          socket.end();
+          return;
+        }
+        if (rx.length < 6 + lenByte) return;
+        const mask = rx.subarray(2, 6);
+        const body = Buffer.from(rx.subarray(6, 6 + lenByte));
+        for (let i = 0; i < body.length; i++) body[i] ^= mask[i & 3];
+        lastClosePayload = body;
+        socket.end(Buffer.from([0x88, 0x00]));
+      });
+    } else if (req.url === '/half-open-close') {
+      // 服务端发送 Close 帧后故意不关闭 TCP 连接，验证客户端 _closeTimer 兜底
+      socket.write(Buffer.from([0x88, 0x02, 0x03, 0xe8]));
+    } else if (req.url === '/oversized-64bit') {
+      const badHeader = Buffer.alloc(10);
+      badHeader[0] = 0x82;
+      badHeader[1] = 127;
+      badHeader.writeBigUInt64BE(BigInt(128 * 1024 * 1024), 2);
+      socket.write(badHeader);
+    }
+  });
+  await new Promise((resolve) => wsServer.listen(0, '127.0.0.1', resolve));
+  const wsPort = wsServer.address().port;
+
+  try {
+    await new Promise((resolve) => {
+      const ws = new MiniWebSocket(`ws://127.0.0.1:${wsPort}/utf8-close`);
+      ws.addEventListener('open', () => ws.close(1000, '冬'.repeat(60)));
+      ws.addEventListener('close', resolve);
+    });
+    assert.ok(lastClosePayload);
+    assert.ok(lastClosePayload.length <= 125, `Close 帧负载不得超过 125 字节，实际 ${lastClosePayload.length}`);
+    assert.equal(lastClosePayload.subarray(2).toString('utf8'), '冬'.repeat(41));
+
+    await new Promise((resolve, reject) => {
+      const ws = new MiniWebSocket(`ws://127.0.0.1:${wsPort}/half-open-close`);
+      const guard = setTimeout(() => reject(new Error('半开 Close 帧未在预期时间内兜底关闭')), 2200);
+      ws.addEventListener('close', () => {
+        clearTimeout(guard);
+        assert.equal(ws.readyState, MiniWebSocket.CLOSED);
+        resolve();
+      });
+    });
+
+    const errMsg = await new Promise((resolve, reject) => {
+      const ws = new MiniWebSocket(`ws://127.0.0.1:${wsPort}/oversized-64bit`);
+      let capturedErr = null;
+      ws.addEventListener('error', (ev) => {
+        capturedErr = ev.message;
+      });
+      ws.addEventListener('close', () => {
+        if (capturedErr) resolve(capturedErr);
+        else reject(new Error('超限 64 位帧长未触发 error'));
+      });
+    });
+    assert.match(errMsg, /超出安全上限|非法/);
+  } finally {
+    for (const sock of wsSockets) sock.destroy();
+    await new Promise((r) => wsServer.close(r));
+  }
+
+  // 2. startWatch.stop() 与 runSyncPass() 并发竞态不泄漏 CdpSession
+  const raceSockets = new Set();
+  let releaseDelayedUpgrade = null;
+  const raceServer = createServer((req, res) => {
+    if (req.url === '/json/list') {
+      const addr = raceServer.address();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify([
+          {
+            id: 'race-page',
+            type: 'page',
+            title: 'Antigravity Race',
+            url: `https://127.0.0.1:${addr.port}/c/race`,
+            webSocketDebuggerUrl: `ws://127.0.0.1:${addr.port}/devtools/page/race-page`,
+          },
+        ]),
+      );
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  let pageAdded = false;
+  raceServer.on('upgrade', (req, socket) => {
+    raceSockets.add(socket);
+    socket.on('close', () => raceSockets.delete(socket));
+    const key = req.headers['sec-websocket-key'];
+    const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+    const completeHandshake = () => {
+      if (socket.destroyed) return;
+      socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+    };
+    if (req.url === '/devtools/page/race-page' && pageAdded) {
+      releaseDelayedUpgrade = completeHandshake;
+    } else {
+      socket.destroy();
+    }
+  });
+  await new Promise((resolve) => raceServer.listen(0, '127.0.0.1', resolve));
+  const racePort = raceServer.address().port;
+
+  const raceDir = mkdtempSync(join(tmpdir(), 'dxl-stop-race-'));
+  const racePidFile = join(raceDir, '.watch.pid');
+  try {
+    const watcher = await startWatch({
+      rootDir: ROOT,
+      port: racePort,
+      portFile: join(raceDir, 'missing-port'),
+      pidFile: racePidFile,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          pageAdded
+            ? [
+                {
+                  id: 'race-page',
+                  type: 'page',
+                  title: 'Antigravity Race',
+                  url: `https://127.0.0.1:${racePort}/c/race`,
+                  webSocketDebuggerUrl: `ws://127.0.0.1:${racePort}/devtools/page/race-page`,
+                },
+              ]
+            : [],
+      }),
+      logger: { log: () => {}, warn: () => {}, error: () => {} },
+    });
+    pageAdded = true;
+    const syncP = watcher.syncNow();
+    const waitDeadline = Date.now() + 1500;
+    while (!releaseDelayedUpgrade && Date.now() < waitDeadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.ok(releaseDelayedUpgrade, 'runSyncPass 应已发起 WebSocket 连接');
+    const stopP = watcher.stop();
+    releaseDelayedUpgrade();
+    await Promise.all([stopP, syncP]);
+    assert.equal(watcher.getAttachedCount(), 0, 'stop() 与 syncNow() 并发竞态不得遗留已挂载会话');
+  } finally {
+    for (const sock of raceSockets) sock.destroy();
+    await new Promise((r) => raceServer.close(r));
+    rmSync(raceDir, { recursive: true, force: true });
+  }
+
+  // 3. 初始缺失嵌套 portDir 与 user/ 目录，运行期创建及删建后仍能自动挂接并触发注入与热重载
+  const domMap = new Map();
+  const cdpServer = await startMockCdpServer({
+    onEvaluate: (pageState, expression) => {
+      if (!domMap.has(pageState.id)) {
+        const page = createMockAntigravityPage({ light: true });
+        const btn = page.document.createElement('button');
+        btn.appendChild(page.document.createTextNode('New Conversation'));
+        page.elements.sidebar.appendChild(btn);
+        page.customLabel = btn;
+        domMap.set(pageState.id, page);
+      }
+      return domMap.get(pageState.id).evaluate(expression);
+    },
+  });
+  const watchDir = mkdtempSync(join(tmpdir(), 'dxl-missing-dir-'));
+  const tempRoot = join(watchDir, 'workspace');
+  const nestedPortDir = join(watchDir, 'nested', 'cfg', 'Antigravity');
+  const nestedPortFile = join(nestedPortDir, 'DevToolsActivePort');
+  const watchPidFile = join(watchDir, '.watch.pid');
+  mkdirSync(join(tempRoot, 'assets', 'characters', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'scenes', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'textures', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'i18n'), { recursive: true });
+  mkdirSync(join(tempRoot, 'src'), { recursive: true });
+  cpSync(new URL('../assets/characters/web/avatar.webp', import.meta.url), join(tempRoot, 'assets', 'characters', 'web', 'avatar.webp'));
+  cpSync(new URL('../assets/scenes/web/reading.webp', import.meta.url), join(tempRoot, 'assets', 'scenes', 'web', 'reading.webp'));
+  cpSync(new URL('../assets/textures/web/paper.webp', import.meta.url), join(tempRoot, 'assets', 'textures', 'web', 'paper.webp'));
+  cpSync(new URL('../src/theme.css', import.meta.url), join(tempRoot, 'src', 'theme.css'));
+  writeFileSync(join(tempRoot, 'package.json'), JSON.stringify({ version: '0.1.0' }), 'utf8');
+  writeFileSync(join(tempRoot, 'assets', 'i18n', 'zh-CN.json'), JSON.stringify({ 'New Conversation': '新建对话' }), 'utf8');
+
+  try {
+    cdpServer.addPage({ id: 'late-dir-win', title: 'Antigravity' });
+    const watcher = await startWatch({
+      rootDir: tempRoot,
+      portFile: nestedPortFile,
+      pidFile: watchPidFile,
+      cssDebounceMs: 40,
+      logger: { log: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      assert.equal(watcher.getAttachedCount(), 0);
+      // 先后创建多层不存在的 portDir 与 DevToolsActivePort
+      mkdirSync(nestedPortDir, { recursive: true });
+      writeFileSync(nestedPortFile, `${cdpServer.port}\n`, 'utf8');
+      const connectDeadline = Date.now() + 2500;
+      while (watcher.getAttachedCount() < 1 && Date.now() < connectDeadline) {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      assert.equal(watcher.getAttachedCount(), 1, '缺失的多层 portDir 创建后应自动恢复监听并注入');
+
+      // 启动时不存在 user/ 目录，运行期创建 user/ 并写入 i18n.override.json
+      mkdirSync(join(tempRoot, 'user'), { recursive: true });
+      writeFileSync(
+        join(tempRoot, 'user', 'i18n.override.json'),
+        JSON.stringify({ 'New Conversation': '延迟目录热重载' }),
+        'utf8',
+      );
+      const reloadDeadline = Date.now() + 2500;
+      const page = domMap.get('late-dir-win');
+      while (page.customLabel.textContent !== '延迟目录热重载' && Date.now() < reloadDeadline) {
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      assert.equal(page.customLabel.textContent, '延迟目录热重载');
+    } finally {
+      await watcher.stop();
+    }
+  } finally {
+    await cdpServer.close();
+    rmSync(watchDir, { recursive: true, force: true });
+  }
+});
+
+test('prepareRuntimePayload 预编译指纹缓存命中、配置变更失效与源文件更新失效', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-payload-cache-'));
+  const tempRoot = join(dir, 'repo');
+  const cacheFile = join(dir, 'payload-cache.json');
+  mkdirSync(join(tempRoot, 'assets', 'characters', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'scenes', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'textures', 'web'), { recursive: true });
+  mkdirSync(join(tempRoot, 'assets', 'i18n'), { recursive: true });
+  mkdirSync(join(tempRoot, 'src'), { recursive: true });
+  cpSync(new URL('../assets/characters/web/avatar.webp', import.meta.url), join(tempRoot, 'assets', 'characters', 'web', 'avatar.webp'));
+  cpSync(new URL('../assets/scenes/web/reading.webp', import.meta.url), join(tempRoot, 'assets', 'scenes', 'web', 'reading.webp'));
+  cpSync(new URL('../assets/textures/web/paper.webp', import.meta.url), join(tempRoot, 'assets', 'textures', 'web', 'paper.webp'));
+  cpSync(new URL('../src/theme.css', import.meta.url), join(tempRoot, 'src', 'theme.css'));
+  writeFileSync(join(tempRoot, 'package.json'), JSON.stringify({ version: '0.1.0' }), 'utf8');
+  writeFileSync(join(tempRoot, 'assets', 'i18n', 'zh-CN.json'), JSON.stringify({ 'New Conversation': '新建对话' }), 'utf8');
+
+  try {
+    const first = prepareRuntimePayload({ rootDir: tempRoot, cacheFile });
+    assert.equal(first.fromCache, false);
+    assert.equal(existsSync(cacheFile), true);
+
+    const second = prepareRuntimePayload({ rootDir: tempRoot, cacheFile });
+    assert.equal(second.fromCache, true);
+    assert.equal(second.script, first.script);
+    assert.equal(second.version, first.version);
+
+    const optChanged = prepareRuntimePayload({ rootDir: tempRoot, avatar: false, cacheFile });
+    assert.equal(optChanged.fromCache, false);
+    assert.notEqual(optChanged.script, first.script);
+
+    writeFileSync(
+      join(tempRoot, 'assets', 'i18n', 'zh-CN.json'),
+      JSON.stringify({ 'New Conversation': '新建会话缓存失效' }),
+      'utf8',
+    );
+    const srcChanged = prepareRuntimePayload({ rootDir: tempRoot, avatar: false, cacheFile });
+    assert.equal(srcChanged.fromCache, false);
+    assert.match(srcChanged.script, /新建会话缓存失效/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

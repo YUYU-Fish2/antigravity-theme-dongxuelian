@@ -21,6 +21,7 @@ import {
   isNodeProcessPid,
   parseCliArgs,
   readLiveWatcherPid,
+  removeOnce,
   rotateLogIfNeeded,
   watchLoop,
 } from '../src/runner.js';
@@ -828,5 +829,93 @@ test('Windows 任务计划程序可用时优先通过 Start-ScheduledTask 独立
     assert.equal(installRes.pid, expectedPid);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('回归测试：Linux .desktop Exec= 严格转义特殊字符，watchLoop --if-not-running 并发拉起仅一个胜出', async () => {
+  // 1. Linux .desktop Exec= 转义 \、"、$、` 与 XDG % -> %%
+  const desktop = buildLinuxDesktopEntry({
+    nodePath: '/usr/bin/node',
+    watchScriptPath: '/home/u/dir$1/dir%20a/dir\\b/`tick`/bin/watch.js',
+    rootDir: '/home/u/dir',
+    daemonArgs: ['--daemon', '--i18n-override', '/home/u/a "b"/100%.json'],
+  });
+  const execLine = desktop.split('\n').find((l) => l.startsWith('Exec='));
+  assert.ok(execLine);
+  assert.ok(
+    execLine.includes('"/home/u/dir\\$1/dir%%20a/dir\\\\b/\\`tick\\`/bin/watch.js"'),
+    `Exec= 转义结果不符合预期：${execLine}`,
+  );
+  assert.ok(
+    execLine.includes('"/home/u/a \\"b\\"/100%%.json"'),
+    `Exec= 参数引号与百分号转义不符合预期：${execLine}`,
+  );
+
+  // 2. 并发两个真实 Node 子进程执行 watchLoop({ ifNotRunning: true })，验证原子锁仅允许一个守护胜出
+  const dir = mkdtempSync(join(tmpdir(), 'dxl-watch-lock-'));
+  const pidFile = join(dir, '.watch.pid');
+  const logFile = join(dir, 'watch.log');
+  const portFile = join(dir, 'missing-port');
+  const runnerUrl = new URL('../src/runner.js', import.meta.url).href;
+  const childScript = `
+    import { watchLoop } from ${JSON.stringify(runnerUrl)};
+    const silent = { log() {}, warn() {}, error() {} };
+    await watchLoop({
+      rootDir: ${JSON.stringify(REPO_ROOT)},
+      pidFile: ${JSON.stringify(pidFile)},
+      logFile: ${JSON.stringify(logFile)},
+      portFile: ${JSON.stringify(portFile)},
+      daemon: true,
+      ifNotRunning: true,
+      logger: silent,
+    });
+  `;
+  const children = [];
+  try {
+    for (let i = 0; i < 2; i++) {
+      children.push(
+        spawn(process.execPath, ['--input-type=module', '-e', childScript], {
+          stdio: 'ignore',
+          windowsHide: true,
+        }),
+      );
+    }
+
+    const waitOneExit = Promise.race(
+      children.map(
+        (child, idx) =>
+          new Promise((resolve) => child.once('exit', (code) => resolve({ idx, code }))),
+      ),
+    );
+    const firstExit = await waitOneExit;
+    assert.equal(firstExit.code, 0, '败出进程应跳过启动并正常退出');
+
+    const winnerIdx = firstExit.idx === 0 ? 1 : 0;
+    const winner = children[winnerIdx];
+    await waitForCondition(() => readLiveWatcherPid(pidFile) === winner.pid, 2000);
+    assert.equal(winner.exitCode, null, '胜出守护进程应继续驻留运行');
+    assert.equal(readLiveWatcherPid(pidFile), winner.pid, 'PID 文件应记录唯一胜出进程');
+    assert.equal(existsSync(`${pidFile}.lock`), false, '锁文件在完成启动后应被清理');
+
+    const winnerExitP = new Promise((resolve) => winner.once('exit', resolve));
+    const removeRes = await removeOnce({
+      rootDir: REPO_ROOT,
+      portFile,
+      pidFile,
+      skipAutostartHint: true,
+      logger: { log() {}, warn() {}, error() {} },
+    });
+    assert.equal(removeRes.stoppedWatcher, true);
+    await winnerExitP;
+    assert.equal(existsSync(pidFile), false, '胜出进程停止后应清理 .watch.pid');
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null) {
+        try {
+          child.kill('SIGKILL');
+        } catch {}
+      }
+    }
+    rmSync(dir, { recursive: true, force: true });
   }
 });

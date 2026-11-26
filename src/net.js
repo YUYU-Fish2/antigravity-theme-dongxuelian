@@ -11,6 +11,22 @@ import { get as httpGet, request as httpRequest } from 'node:http';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_FRAME_BYTES = 64 * 1024 * 1024;
+
+function truncateUtf8Buffer(text, maxBytes) {
+  const raw = String(text ?? '');
+  const full = Buffer.from(raw, 'utf8');
+  if (full.length <= maxBytes) return full;
+  let byteLen = 0;
+  let endIndex = 0;
+  for (const ch of raw) {
+    const chBytes = Buffer.byteLength(ch, 'utf8');
+    if (byteLen + chBytes > maxBytes) break;
+    byteLen += chBytes;
+    endIndex += ch.length;
+  }
+  return Buffer.from(raw.slice(0, endIndex), 'utf8');
+}
 
 /**
  * 通过 `node:http` GET 并解析 JSON（替代 `fetch(url).then(r => r.json())`）。
@@ -208,7 +224,12 @@ export class MiniWebSocket {
         offset = 4;
       } else if (len === 127) {
         if (buf.length < 10) return;
-        len = Number(buf.readBigUInt64BE(2));
+        const bigLen = buf.readBigUInt64BE(2);
+        if ((buf[2] & 0x80) !== 0 || bigLen > BigInt(MAX_FRAME_BYTES)) {
+          this._fail(new Error(`WebSocket 帧长度非法或超出安全上限：${bigLen}`));
+          return;
+        }
+        len = Number(bigLen);
         offset = 10;
       }
       const masked = (b1 & 0x80) !== 0;
@@ -235,6 +256,7 @@ export class MiniWebSocket {
       }
       this.readyState = 2;
       this._socket?.end();
+      this._armCloseTimer();
       return;
     }
     if (opcode === 0x9) {
@@ -267,6 +289,12 @@ export class MiniWebSocket {
     this._writeFrame(0x1, payload);
   }
 
+  _armCloseTimer() {
+    if (this._closeTimer) return;
+    this._closeTimer = setTimeout(() => this._socket?.destroy(), 1000);
+    this._closeTimer.unref?.();
+  }
+
   close(code = 1000, reason = '') {
     if (this.readyState >= 2) return;
     if (this.readyState === 0) {
@@ -276,13 +304,12 @@ export class MiniWebSocket {
       return;
     }
     this.readyState = 2;
-    const reasonBuf = Buffer.from(String(reason).slice(0, 120), 'utf8');
+    const reasonBuf = truncateUtf8Buffer(reason, 123);
     const body = Buffer.allocUnsafe(2 + reasonBuf.length);
     body.writeUInt16BE(code, 0);
     reasonBuf.copy(body, 2);
     this._writeFrame(0x8, body);
-    this._closeTimer = setTimeout(() => this._socket?.destroy(), 1000);
-    this._closeTimer.unref?.();
+    this._armCloseTimer();
   }
 
   _fail(err) {

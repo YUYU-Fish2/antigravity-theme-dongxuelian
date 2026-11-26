@@ -56,10 +56,16 @@ function escapeXml(value) {
 
 function quoteShellArg(arg) {
   const s = String(arg);
-  if (/^[A-Za-z0-9_./:\\=-]+$/.test(s)) {
+  if (/^[A-Za-z0-9_./:=-]+$/.test(s)) {
     return s;
   }
-  return `"${s.replaceAll('"', '\\"')}"`;
+  const escaped = s
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('$', '\\$')
+    .replaceAll('`', '\\`')
+    .replaceAll('%', '%%');
+  return `"${escaped}"`;
 }
 
 /**
